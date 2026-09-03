@@ -23,17 +23,46 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyinstaller faster-whisper
 
-      - name: Build exe
+      - name: Build (onedir, no UPX)
         run: |
-          python -m PyInstaller --noconfirm --onefile --windowed --name STT_KOR `
+          python -m PyInstaller --noconfirm --onedir --windowed --noupx --name STT_KOR `
             --collect-all faster_whisper `
             --collect-all ctranslate2 `
             --collect-all av `
             --collect-all onnxruntime `
             stt_app.py
 
+      - name: Package zip + SHA256
+        run: |
+          $ver = "${{ github.ref_name }}"
+          $zip = "STT_KOR-$ver-windows-x64.zip"
+          Compress-Archive -Path dist/STT_KOR -DestinationPath $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $zip" | Out-File "$zip.sha256.txt" -Encoding ascii
+          "ASSET_ZIP=$zip" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/STT_KOR.exe
+          files: |
+            ${{ env.ASSET_ZIP }}
+            ${{ env.ASSET_ZIP }}.sha256.txt
           generate_release_notes: true
+          body: |
+            ## 설치 방법
+
+            1. 아래 **STT_KOR-${{ github.ref_name }}-windows-x64.zip** 을 받아 압축을 풉니다.
+            2. `STT_KOR` 폴더 안의 **STT_KOR.exe** 를 실행합니다.
+               (폴더째로 옮겨도 되지만, exe 하나만 빼내면 실행되지 않습니다.)
+
+            ## "Windows가 PC를 보호했습니다" 창이 뜰 때
+
+            서명되지 않은 개인 제작 프로그램이라 Windows SmartScreen이 경고를 표시합니다. 바이러스가 아닙니다.
+
+            **추가 정보** 클릭 → **실행** 버튼 클릭
+
+            ## 참고
+
+            - Python 설치 불필요. 첫 실행 시 음성 인식 모델(수백 MB~수 GB)을 자동으로 내려받습니다.
+            - NVIDIA GPU가 있으면 최초 1회 CUDA 라이브러리(약 1.3GB) 다운로드 여부를 물어봅니다. '아니오'를 누르면 CPU로 동작합니다.
+            - `*.sha256.txt` 는 무결성 검증용 체크섬입니다.
