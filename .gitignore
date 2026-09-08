@@ -5,5 +5,11 @@ build/
 dist/
 *.spec
 STT_KOR-*.zip
+STT_KOR-*-Setup.exe
+installer_out/
 *.sha256.txt
 RELEASE_GUIDE.txt
+
+# 개인 경로가 하드코딩된 로컬 전용 CLI 스크립트 (배포 대상 아님)
+stt_korean.py
+stt_korean_0.0.1.py
