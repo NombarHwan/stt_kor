@@ -6,9 +6,16 @@ Python이나 pip 없이도 실행할 수 있도록 PyInstaller로 exe 패키징�
 라이브러리(cublas/cudnn/nvrtc, 약 1.3GB)를 PyPI에서 내려받아
 %LOCALAPPDATA%에 캐싱합니다(최초 1회). AMD GPU나 내장 그래픽, GPU가 없는
 환경에서는 다운로드 없이 바로 CPU로 동작합니다.
+
+앱 시작 시 RAM/CPU 코어/GPU(VRAM)를 감지해 적정 모델을 자동으로 골라
+주고(recommend_model), 사용자가 모델을 바꾸면 예상 처리 시간·품질·메모리
+경고 등 주의사항을 화면에 표시합니다(model_notices).
 """
 
+from __future__ import annotations
+
 import ctypes
+import glob
 import json
 import os
 import queue
@@ -20,6 +27,7 @@ import tkinter as tk
 import traceback
 import urllib.request
 import zipfile
+from dataclasses import dataclass
 from tkinter import filedialog, messagebox, ttk
 
 APP_DIR_NAME = "STT_KOR"
@@ -34,7 +42,28 @@ CUDA_PACKAGES = [
 ]
 
 MODEL_SIZES = ["large-v3", "medium", "small", "base", "tiny"]
-DEFAULT_MODEL_SIZE = "large-v3"
+# 하드웨어 감지 전까지 쓰는 잠정 기본값. 감지가 끝나면 recommend_model()이
+# 사용자가 아직 콤보박스를 건드리지 않은 경우에 한해 권장값으로 바꾼다.
+DEFAULT_MODEL_SIZE = "medium"
+
+# 모델별 최초 1회 다운로드 용량과 한국어 강의 기준 품질 설명.
+MODEL_INFO = {
+    "tiny": {"download": "약 75 MB", "quality": "매우 낮음 — 키워드 수준, 받아쓰기 부적합"},
+    "base": {"download": "약 145 MB", "quality": "낮음 — 대략적인 내용 파악용"},
+    "small": {"download": "약 480 MB", "quality": "보통 — 깨끗한 녹음이면 요지 파악, 교정 많이 필요"},
+    "medium": {"download": "약 1.5 GB", "quality": "좋음 — 일반 강의는 신뢰할 만함, 가벼운 교정"},
+    "large-v3": {"download": "약 3.1 GB", "quality": "최상 — 전문용어·숫자에 강함, 거의 교정 불필요"},
+}
+
+# 1시간 분량 오디오 기준 예상 처리 시간. backend: gpu / cpu_strong / cpu_weak.
+EST_TIME = {
+    "tiny": {"gpu": "1분 내외", "cpu_strong": "3~6분", "cpu_weak": "10~15분"},
+    "base": {"gpu": "1~2분", "cpu_strong": "5~10분", "cpu_weak": "15~25분"},
+    "small": {"gpu": "2~4분", "cpu_strong": "15~30분", "cpu_weak": "40~70분"},
+    "medium": {"gpu": "3~6분", "cpu_strong": "45~90분", "cpu_weak": "2~3시간"},
+    "large-v3": {"gpu": "5~12분", "cpu_strong": "2~4시간", "cpu_weak": "5시간 이상"},
+}
+
 AUDIO_FILETYPES = [
     ("오디오 파일", "*.mp3 *.wav *.m4a *.mp4 *.aac *.flac *.ogg *.wma"),
     ("모든 파일", "*.*"),
@@ -146,12 +175,242 @@ def _register_cuda_dlls() -> None:
                     pass
 
 
+# ---- 하드웨어 감지 및 모델 추천 -----------------------------------------
+
+
+@dataclass
+class Hardware:
+    ram_gb: float | None
+    cpu_name: str
+    cpu_cores: int | None   # 물리 코어
+    cpu_threads: int        # 논리 프로세서
+    has_nvidia: bool
+    gpu_name: str
+    vram_gb: float | None
+
+
+def _total_ram_gb() -> float | None:
+    try:
+        if os.name == "nt":
+
+            class _MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = _MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                return stat.ullTotalPhys / (1024 ** 3)
+        else:
+            return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / (1024 ** 3)
+    except Exception:
+        return None
+    return None
+
+
+def _powershell_hw() -> tuple[str | None, int | None, list[str]]:
+    """(CPU 이름, 물리 코어 수, GPU 이름 목록). 실패 시 (None, None, [])."""
+    if os.name != "nt":
+        return None, None, []
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+    except AttributeError:
+        creationflags = 0
+    script = (
+        "$ErrorActionPreference='SilentlyContinue';"
+        "$vc=Get-CimInstance Win32_VideoController;"
+        "$cpu=Get-CimInstance Win32_Processor|Select-Object -First 1;"
+        "[pscustomobject]@{gpus=@($vc.Name);cpu=$cpu.Name;"
+        "cores=[int]$cpu.NumberOfCores}|ConvertTo-Json -Compress"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            creationflags=creationflags,
+        )
+        data = json.loads(result.stdout.strip() or "{}")
+    except Exception:
+        return None, None, []
+    gpus = data.get("gpus") or []
+    if isinstance(gpus, str):
+        gpus = [gpus]
+    gpus = [g for g in gpus if g]
+    try:
+        cores = int(data.get("cores")) if data.get("cores") else None
+    except (TypeError, ValueError):
+        cores = None
+    return (data.get("cpu") or None), cores, gpus
+
+
+def _nvidia_vram_gb() -> float | None:
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+    except AttributeError:
+        creationflags = 0
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=creationflags,
+        )
+    except Exception:
+        return None
+    vals = [int(t) for t in result.stdout.replace(",", " ").split() if t.strip().isdigit()]
+    return max(vals) / 1024 if vals else None
+
+
+def detect_hardware() -> Hardware:
+    ram = _total_ram_gb()
+    threads = os.cpu_count() or 2
+    cpu_name, cores, gpu_names = _powershell_hw()
+    has_nvidia = any("nvidia" in g.lower() for g in gpu_names)
+    gpu_name = next(
+        (g for g in gpu_names if "nvidia" in g.lower()),
+        gpu_names[0] if gpu_names else "",
+    )
+    vram = _nvidia_vram_gb() if has_nvidia else None
+    return Hardware(ram, cpu_name or "", cores, threads, has_nvidia, gpu_name, vram)
+
+
+def recommend_model(hw: Hardware | None) -> tuple[str, str]:
+    """(권장 모델, 이유 문구)."""
+    if hw is None:
+        return "medium", "하드웨어를 확인하지 못해 안전한 기본값(medium)을 사용합니다."
+    if hw.has_nvidia:
+        if hw.vram_gb is None or hw.vram_gb >= 5.5:
+            return (
+                "large-v3",
+                f"NVIDIA GPU 감지 ({hw.gpu_name or '모델명 미상'}) — 최고 품질 모델을 쓸 수 있습니다.",
+            )
+        if hw.vram_gb >= 3.5:
+            return (
+                "medium",
+                f"NVIDIA GPU VRAM 약 {hw.vram_gb:.0f}GB — large-v3에는 부족해 medium을 권장합니다.",
+            )
+        return "small", f"NVIDIA GPU VRAM 약 {hw.vram_gb:.0f}GB — small을 권장합니다."
+    ram = hw.ram_gb or 8.0
+    cores = hw.cpu_cores or hw.cpu_threads or 2
+    if ram >= 15 and cores >= 6:
+        return (
+            "medium",
+            f"GPU 없음 · RAM {ram:.0f}GB · {cores}코어 — 속도와 품질의 균형점으로 medium을 권장합니다.",
+        )
+    if ram >= 7 and cores >= 4:
+        return (
+            "small",
+            f"GPU 없음 · RAM {ram:.0f}GB · {cores}코어 — small을 권장합니다 "
+            "(medium은 1시간 강의에 1시간 이상 걸립니다).",
+        )
+    return (
+        "base",
+        f"GPU 없음 · 저사양 (RAM {ram:.0f}GB) — base를 권장합니다 "
+        "(정확도는 낮고 요지 확인용입니다).",
+    )
+
+
+def _model_backend(hw: Hardware | None) -> str:
+    if hw and hw.has_nvidia:
+        return "gpu"
+    cores = (hw.cpu_cores or hw.cpu_threads) if hw else (os.cpu_count() or 2)
+    ram = (hw.ram_gb if hw else None) or 8.0
+    return "cpu_strong" if (cores and cores >= 6 and ram >= 15) else "cpu_weak"
+
+
+def _model_cached(model: str) -> bool:
+    """faster-whisper(HuggingFace 캐시)에 모델이 이미 받아져 있는지 추정."""
+    name = model.replace("/", "--")
+    bases = []
+    for var in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        if os.environ.get(var):
+            bases.append(os.environ[var])
+    if os.environ.get("HF_HOME"):
+        bases.append(os.path.join(os.environ["HF_HOME"], "hub"))
+    bases.append(os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"))
+    for b in bases:
+        try:
+            if glob.glob(os.path.join(b, f"models--*faster-whisper-{name}*")):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def model_notices(model: str, hw: Hardware | None) -> list[tuple[str, str]]:
+    """선택한 모델에 대한 (수준, 문구) 목록. 수준은 'warn' 또는 'info'."""
+    backend = _model_backend(hw)
+    est = EST_TIME[model][backend]
+    where = "GPU 사용 시" if backend == "gpu" else "CPU 사용"
+    out: list[tuple[str, str]] = [
+        ("info", f"1시간 분량 기준 예상 처리 시간: 약 {est} ({where})"),
+        ("info", f"품질: {MODEL_INFO[model]['quality']}"),
+    ]
+    if not _model_cached(model):
+        out.append(
+            ("info", f"이 모델을 처음 쓰면 최초 1회 {MODEL_INFO[model]['download']}를 내려받습니다.")
+        )
+
+    ram = hw.ram_gb if hw else None
+    if model == "large-v3":
+        if backend != "gpu":
+            out.append(
+                ("warn", "GPU를 쓰지 않아 처리 시간이 매우 깁니다. medium 이하를 권장합니다.")
+            )
+        if ram is not None and ram < 12:
+            out.append(
+                (
+                    "warn",
+                    f"large-v3는 RAM 16GB를 권장합니다. 현재 약 {ram:.0f}GB로 "
+                    "변환 중 프로그램이 종료될 수 있습니다.",
+                )
+            )
+        if hw and hw.has_nvidia and not cuda_libs_ready():
+            out.append(
+                ("info", "GPU 가속을 위해 최초 1회 CUDA 라이브러리(약 1.3GB)를 내려받습니다.")
+            )
+    elif model == "medium":
+        if backend == "cpu_weak":
+            out.append(
+                ("warn", "이 PC 사양에서는 1시간 분량 처리에 1시간 이상 걸릴 수 있습니다.")
+            )
+        if ram is not None and ram < 8:
+            out.append(
+                ("warn", f"medium은 RAM 8GB 이상을 권장합니다. 현재 약 {ram:.0f}GB.")
+            )
+    else:
+        out.append(
+            (
+                "info",
+                "정확도가 낮아 고유명사·숫자·전문용어에서 오류가 잦습니다. "
+                "녹취록으로 쓰려면 교정이 필요합니다.",
+            )
+        )
+        if model in ("base", "tiny"):
+            out.append(
+                ("warn", "이 모델은 대략적인 내용 파악용입니다. 정확한 받아쓰기에는 적합하지 않습니다.")
+            )
+    return out
+
+
 class SttApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("한국어 강의 STT")
-        self.root.geometry("640x520")
-        self.root.minsize(520, 400)
+        self.root.geometry("640x600")
+        self.root.minsize(520, 480)
 
         self.selected_files: list[str] = []
         self.output_dir: str | None = None
@@ -161,9 +420,12 @@ class SttApp:
         self.model_size_loaded: str | None = None
         self.gpu_checked = False
         self.declined_gpu_download = False
+        self.hw: Hardware | None = None
+        self.model_user_touched = False
 
         self._build_widgets()
         self.root.after(100, self._drain_log_queue)
+        threading.Thread(target=self._detect_hw_worker, daemon=True).start()
 
     # ---- UI ---------------------------------------------------------
 
@@ -184,6 +446,7 @@ class SttApp:
             top, textvariable=self.model_var, values=MODEL_SIZES, width=10, state="readonly"
         )
         model_combo.pack(side="left")
+        model_combo.bind("<<ComboboxSelected>>", self._on_model_selected)
 
         self.files_label = ttk.Label(self.root, text="선택된 파일 없음", foreground="#555")
         self.files_label.pack(fill="x", padx=10)
@@ -192,6 +455,14 @@ class SttApp:
             self.root, text="출력 폴더: (원본 파일과 같은 폴더)", foreground="#555"
         )
         self.output_label.pack(fill="x", padx=10, pady=(0, 6))
+
+        self.hw_label = ttk.Label(
+            self.root, text="하드웨어 확인 중...", foreground="#555", justify="left"
+        )
+        self.hw_label.pack(fill="x", padx=10, pady=(0, 2))
+
+        self.model_note_label = ttk.Label(self.root, text="", foreground="#555", justify="left")
+        self.model_note_label.pack(fill="x", padx=10, pady=(0, 6))
 
         action_row = ttk.Frame(self.root)
         action_row.pack(fill="x", padx=10, pady=(0, 6))
@@ -207,6 +478,9 @@ class SttApp:
         self.log_text.configure(yscrollcommand=scrollbar.set)
         self.log_text.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+
+        self.root.bind("<Configure>", self._on_resize)
+        self._refresh_model_note()
 
     def _choose_files(self) -> None:
         paths = filedialog.askopenfilenames(title="변환할 오디오 파일 선택", filetypes=AUDIO_FILETYPES)
@@ -240,6 +514,51 @@ class SttApp:
             pass
         self.root.after(100, self._drain_log_queue)
 
+    # ---- 하드웨어 감지 / 모델 안내 -------------------------------------
+
+    def _detect_hw_worker(self) -> None:
+        hw = detect_hardware()
+        self.root.after(0, lambda: self._on_hw_detected(hw))
+
+    def _on_hw_detected(self, hw: Hardware) -> None:
+        self.hw = hw
+        rec, reason = recommend_model(hw)
+
+        bits: list[str] = []
+        if hw.ram_gb:
+            bits.append(f"RAM {hw.ram_gb:.0f}GB")
+        cores = hw.cpu_cores or hw.cpu_threads
+        if cores:
+            bits.append(f"CPU {cores}코어")
+        if hw.has_nvidia:
+            bits.append(f"NVIDIA GPU{f' {hw.vram_gb:.0f}GB' if hw.vram_gb else ''}")
+        elif hw.gpu_name:
+            bits.append("GPU 가속 미지원(비 NVIDIA)")
+        summary = " · ".join(bits) if bits else "하드웨어 정보를 읽지 못함"
+
+        if not self.model_user_touched:
+            self.model_var.set(rec)
+        self.hw_label.config(text=f"감지: {summary}\n권장 모델: {rec} — {reason}")
+        self._refresh_model_note()
+
+    def _on_model_selected(self, _event: object = None) -> None:
+        self.model_user_touched = True
+        self._refresh_model_note()
+
+    def _refresh_model_note(self) -> None:
+        notices = model_notices(self.model_var.get(), self.hw)
+        has_warn = any(level == "warn" for level, _ in notices)
+        lines = [("⚠ " if level == "warn" else "· ") + text for level, text in notices]
+        self.model_note_label.config(
+            text="\n".join(lines), foreground="#b23b3b" if has_warn else "#555"
+        )
+
+    def _on_resize(self, event: tk.Event) -> None:
+        if event.widget is self.root:
+            width = max(300, event.width - 40)
+            self.hw_label.config(wraplength=width)
+            self.model_note_label.config(wraplength=width)
+
     # ---- GPU 확인/다운로드 (메인 스레드) ---------------------------------
 
     def _maybe_offer_gpu_download(self) -> None:
@@ -249,7 +568,8 @@ class SttApp:
             return
         self.gpu_checked = True
 
-        if not detect_nvidia_gpu():
+        has_nvidia = self.hw.has_nvidia if self.hw else detect_nvidia_gpu()
+        if not has_nvidia:
             self._log("NVIDIA GPU가 감지되지 않았습니다. CPU로 실행합니다.")
             return
 
@@ -322,6 +642,8 @@ class SttApp:
         if not self.selected_files:
             messagebox.showwarning("파일 없음", "먼저 오디오 파일을 선택하세요.")
             return
+        if not self._confirm_model_choice():
+            return
 
         self.pending_cuda_download = False
         self._maybe_offer_gpu_download()
@@ -330,6 +652,19 @@ class SttApp:
         self.progress.start(12)
         self.worker = threading.Thread(target=self._run_worker, daemon=True)
         self.worker.start()
+
+    def _confirm_model_choice(self) -> bool:
+        """선택한 모델에 경고(warn) 수준 주의사항이 있으면 진행 여부를 되묻는다."""
+        model = self.model_var.get()
+        warns = [text for level, text in model_notices(model, self.hw) if level == "warn"]
+        if not warns:
+            return True
+        body = (
+            f"선택한 모델: {model}\n\n"
+            + "\n".join("• " + w for w in warns)
+            + "\n\n이대로 진행할까요?"
+        )
+        return messagebox.askokcancel("모델 확인", body)
 
     def _output_path_for(self, audio_path: str) -> str:
         base = os.path.splitext(os.path.basename(audio_path))[0]
