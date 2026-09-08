@@ -32,37 +32,69 @@ jobs:
             --collect-all onnxruntime `
             stt_app.py
 
-      - name: Package zip + SHA256
+      - name: Build installer (Inno Setup)
         run: |
-          $ver = "${{ github.ref_name }}"
-          $zip = "STT_KOR-$ver-windows-x64.zip"
+          $ver = "${{ github.ref_name }}".TrimStart('v')
+          function Resolve-Iscc {
+            $p = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            if (Test-Path $p) { return $p }
+            $cmd = Get-Command iscc -ErrorAction SilentlyContinue
+            if ($cmd) { return $cmd.Source }
+            return $null
+          }
+          $iscc = Resolve-Iscc
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = Resolve-Iscc
+          }
+          if (-not $iscc) { throw "ISCC.exe 를 찾을 수 없습니다." }
+          & $iscc /DAppVersion=$ver installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC 빌드 실패 (exit $LASTEXITCODE)" }
+
+      - name: Package assets + SHA256
+        run: |
+          $ver   = "${{ github.ref_name }}"
+          $zip   = "STT_KOR-$ver-windows-x64.zip"
+          $setup = "installer_out\STT_KOR-$ver-Setup.exe"
           Compress-Archive -Path dist/STT_KOR -DestinationPath $zip
-          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          "$hash  $zip" | Out-File "$zip.sha256.txt" -Encoding ascii
-          "ASSET_ZIP=$zip" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+          if (-not (Test-Path $setup)) { throw "설치 파일이 없습니다: $setup" }
+          foreach ($f in @($zip, $setup)) {
+            $name = [System.IO.Path]::GetFileName($f)
+            $hash = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
+            "$hash  $name" | Out-File "$f.sha256.txt" -Encoding ascii
+          }
+          "ASSET_SETUP=$setup"                | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+          "ASSET_SETUP_SHA=$setup.sha256.txt" | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+          "ASSET_ZIP=$zip"                    | Out-File $env:GITHUB_ENV -Append -Encoding ascii
+          "ASSET_ZIP_SHA=$zip.sha256.txt"     | Out-File $env:GITHUB_ENV -Append -Encoding ascii
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            ${{ env.ASSET_SETUP }}
+            ${{ env.ASSET_SETUP_SHA }}
             ${{ env.ASSET_ZIP }}
-            ${{ env.ASSET_ZIP }}.sha256.txt
+            ${{ env.ASSET_ZIP_SHA }}
           generate_release_notes: true
           body: |
-            ## 설치 방법
+            ## 설치 방법 (권장)
 
-            1. 아래 **STT_KOR-${{ github.ref_name }}-windows-x64.zip** 을 받아 압축을 풉니다.
-            2. `STT_KOR` 폴더 안의 **STT_KOR.exe** 를 실행합니다.
-               (폴더째로 옮겨도 되지만, exe 하나만 빼내면 실행되지 않습니다.)
+            1. 아래 **STT_KOR-${{ github.ref_name }}-Setup.exe** 를 받아 더블클릭합니다.
+            2. "Windows가 PC를 보호했습니다" 창이 뜨면 **추가 정보 → 실행**.
+               (서명되지 않은 개인 제작 프로그램이라 그렇습니다. 바이러스가 아닙니다.)
+            3. 설치가 끝나면 **바탕화면** 또는 **시작 메뉴**의 "한국어 강의 STT" 아이콘으로 실행합니다.
 
-            ## "Windows가 PC를 보호했습니다" 창이 뜰 때
+            Python 설치도, 관리자 권한도 필요 없습니다.
 
-            서명되지 않은 개인 제작 프로그램이라 Windows SmartScreen이 경고를 표시합니다. 바이러스가 아닙니다.
+            ## 압축(zip)으로 받고 싶다면
 
-            **추가 정보** 클릭 → **실행** 버튼 클릭
+            **STT_KOR-${{ github.ref_name }}-windows-x64.zip** 을 받아 압축을 풀고
+            `STT_KOR` 폴더 안의 **STT_KOR.exe** 를 실행합니다.
+            (exe 하나만 빼내면 실행되지 않습니다. 폴더째 두세요.)
 
             ## 참고
 
-            - Python 설치 불필요. 첫 실행 시 음성 인식 모델(수백 MB~수 GB)을 자동으로 내려받습니다.
+            - 첫 실행 시 음성 인식 모델(수백 MB~수 GB)을 자동으로 내려받습니다.
             - NVIDIA GPU가 있으면 최초 1회 CUDA 라이브러리(약 1.3GB) 다운로드 여부를 물어봅니다. '아니오'를 누르면 CPU로 동작합니다.
             - `*.sha256.txt` 는 무결성 검증용 체크섬입니다.
