@@ -368,7 +368,13 @@ class SttApp:
                     self._log(f"  이미 처리됨, 건너뜀: {os.path.basename(output_path)}")
                     continue
 
-                segments, info = model.transcribe(audio_path, language="ko", beam_size=5)
+                segments, info = model.transcribe(
+                    audio_path,
+                    language="ko",
+                    beam_size=5,
+                    condition_on_previous_text=False,
+                    hallucination_silence_threshold=2.0,
+                )
                 self._log(f"  감지된 언어: {info.language} (확률 {info.language_probability:.2%})")
 
                 lines = []
