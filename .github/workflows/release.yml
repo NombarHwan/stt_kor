@@ -29,6 +29,9 @@ jobs:
           # git 출력(한글 커밋 메시지)이 깨지지 않도록 콘솔 인코딩을 UTF-8로 고정.
           [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
           $tag = "${{ github.ref_name }}"
+          # checkout 이 만들어 둔 태그 ref 는 lightweight 라서 annotated 메시지가
+          # 딸려오지 않는다. 원본 태그 객체를 강제로 다시 받아온다.
+          git fetch --force --tags --quiet origin
           $msg = ((git tag -l $tag --format='%(contents:subject)%0a%(contents:body)') -join "`n").Trim()
           if (-not $msg) {
             $prev = git describe --tags --abbrev=0 "$tag^"
