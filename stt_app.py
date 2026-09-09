@@ -10,6 +10,13 @@ Python이나 pip 없이도 실행할 수 있도록 PyInstaller로 exe 패키징�
 앱 시작 시 RAM/CPU 코어/GPU(VRAM)를 감지해 적정 모델을 자동으로 골라
 주고(recommend_model), 사용자가 모델을 바꾸면 예상 처리 시간·품질·메모리
 경고 등 주의사항을 화면에 표시합니다(model_notices).
+
+마지막으로 쓴 오디오 폴더와 출력 폴더는 %LOCALAPPDATA%/STT_KOR/settings.json에
+기억해 두고, 다음 실행 때 파일 선택 창의 시작 위치와 출력 폴더로 복원합니다.
+
+실행하면 GitHub 릴리스를 확인해(하루 몇 번으로 제한) 새 버전이 있으면 패치노트와
+함께 알려주고, 설치 파일을 내려받아 설치 마법사를 띄웁니다. APP_VERSION 줄은
+릴리스 워크플로가 태그 버전으로 덮어씁니다.
 """
 
 from __future__ import annotations
@@ -23,14 +30,28 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 import traceback
 import urllib.request
+import webbrowser
 import zipfile
 from dataclasses import dataclass
 from tkinter import filedialog, messagebox, ttk
 
 APP_DIR_NAME = "STT_KOR"
+
+# 릴리스 워크플로(.github/workflows/release.yml)가 태그 버전으로 이 줄을 덮어쓴다.
+# 형식을 바꾸면 워크플로의 "Stamp version" 단계도 함께 고쳐야 한다.
+APP_VERSION = "1.0.5"
+
+GITHUB_REPO = "NombarHwan/stt_kor"
+RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
+LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+# 릴리스 본문에서 패치노트를 잘라낼 때 기준이 되는 제목(워크플로가 넣는다).
+PATCH_NOTES_HEADING = "## 이번 업데이트"
+# 자동 업데이트 확인 최소 간격(초). 실행할 때마다 GitHub를 두드리지 않도록.
+UPDATE_CHECK_INTERVAL = 6 * 3600
 
 # ctranslate2가 필요로 하는 CUDA 런타임 구성 요소. 버전은 현재 개발 환경에
 # 설치된 nvidia-*-cu12 wheel과 맞춰뒀습니다. ctranslate2를 업그레이드하면
@@ -70,12 +91,136 @@ AUDIO_FILETYPES = [
 ]
 
 
+# ---- 사용자 설정 저장 (마지막 폴더 기억) ---------------------------------
+
+
+def app_data_dir() -> str:
+    """설정/CUDA 캐시/업데이트 파일을 두는 곳. 설치 위치와 무관하게 유지된다."""
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    return os.path.join(base, APP_DIR_NAME)
+
+
+def settings_path() -> str:
+    return os.path.join(app_data_dir(), "settings.json")
+
+
+def load_settings() -> dict:
+    """저장된 설정을 읽는다. 파일이 없거나 깨졌으면 빈 dict."""
+    try:
+        with open(settings_path(), encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_settings(data: dict) -> None:
+    """설정을 저장한다. 실패해도 앱 동작에는 영향이 없으므로 조용히 넘어간다."""
+    path = settings_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _valid_dir(path: object) -> str | None:
+    """설정에서 읽은 폴더 경로가 아직 살아있을 때만 돌려준다(USB 분리 등 대비)."""
+    if isinstance(path, str) and path and os.path.isdir(path):
+        return path
+    return None
+
+
+# ---- 업데이트 확인 (GitHub 릴리스) ---------------------------------------
+
+
+@dataclass
+class Release:
+    version: str          # "1.0.5"
+    notes: str            # 짧은 패치노트
+    setup_url: str | None  # Setup.exe 직접 다운로드 주소 (없으면 웹페이지로 안내)
+    setup_name: str
+    setup_size: int
+    page_url: str
+
+
+def parse_version(text: str) -> tuple[int, ...]:
+    """'v1.0.5' -> (1, 0, 5). 숫자로 못 읽는 부분에서 멈춘다."""
+    parts: list[int] = []
+    for chunk in (text or "").strip().lstrip("vV").split("."):
+        digits = ""
+        for ch in chunk:
+            if not ch.isdigit():
+                break
+            digits += ch
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def is_newer(candidate: str, current: str) -> bool:
+    new, old = parse_version(candidate), parse_version(current)
+    return bool(new) and new > old
+
+
+def extract_patch_notes(body: str) -> str:
+    """릴리스 본문에서 PATCH_NOTES_HEADING 섹션만 뽑는다. 없으면 본문 앞부분."""
+    lines = (body or "").splitlines()
+    picked: list[str] = []
+    capturing = False
+    for line in lines:
+        if line.startswith("## "):
+            if capturing:
+                break
+            capturing = line.strip() == PATCH_NOTES_HEADING
+            continue
+        if capturing:
+            picked.append(line)
+    text = "\n".join(picked).strip()
+    if not text:
+        text = "\n".join(lines).strip()
+    return "\n".join(text.splitlines()[:40]).strip()
+
+
+def fetch_latest_release() -> Release | None:
+    """GitHub의 최신 정식 릴리스 정보. 태그를 못 읽으면 None (draft/prerelease 제외)."""
+    req = urllib.request.Request(
+        LATEST_RELEASE_API,
+        headers={"User-Agent": "stt-kor-app", "Accept": "application/vnd.github+json"},
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.load(resp)
+
+    version = ".".join(str(n) for n in parse_version(data.get("tag_name") or ""))
+    if not version:
+        return None
+
+    setup_url, setup_name, setup_size = None, "", 0
+    for asset in data.get("assets") or []:
+        name = str(asset.get("name") or "")
+        if name.lower().endswith("setup.exe"):
+            setup_url = asset.get("browser_download_url")
+            setup_name = name
+            setup_size = int(asset.get("size") or 0)
+            break
+
+    return Release(
+        version=version,
+        notes=extract_patch_notes(data.get("body") or ""),
+        setup_url=setup_url,
+        setup_name=setup_name,
+        setup_size=setup_size,
+        page_url=data.get("html_url") or RELEASES_PAGE_URL,
+    )
+
+
 # ---- GPU 감지 및 CUDA 라이브러리 온디맨드 다운로드 ------------------------
 
 
 def cuda_libs_dir() -> str:
-    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    return os.path.join(base, APP_DIR_NAME, "cuda_libs")
+    return os.path.join(app_data_dir(), "cuda_libs")
 
 
 def cuda_libs_ready() -> bool:
@@ -408,12 +553,14 @@ def model_notices(model: str, hw: Hardware | None) -> list[tuple[str, str]]:
 class SttApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("한국어 강의 STT")
+        self.root.title(f"한국어 강의 STT v{APP_VERSION}")
         self.root.geometry("640x600")
         self.root.minsize(520, 480)
 
+        self.settings = load_settings()
         self.selected_files: list[str] = []
-        self.output_dir: str | None = None
+        self.input_dir: str | None = _valid_dir(self.settings.get("input_dir"))
+        self.output_dir: str | None = _valid_dir(self.settings.get("output_dir"))
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.worker: threading.Thread | None = None
         self.model = None
@@ -426,6 +573,9 @@ class SttApp:
         self._build_widgets()
         self.root.after(100, self._drain_log_queue)
         threading.Thread(target=self._detect_hw_worker, daemon=True).start()
+        # 창이 뜬 뒤에 대화상자를 띄우도록 한 박자 늦춘다.
+        self.root.after(400, self._show_release_notes_after_update)
+        self.root.after(1200, self._maybe_check_update)
 
     # ---- UI ---------------------------------------------------------
 
@@ -451,10 +601,14 @@ class SttApp:
         self.files_label = ttk.Label(self.root, text="선택된 파일 없음", foreground="#555")
         self.files_label.pack(fill="x", padx=10)
 
-        self.output_label = ttk.Label(
-            self.root, text="출력 폴더: (원본 파일과 같은 폴더)", foreground="#555"
+        output_row = ttk.Frame(self.root)
+        output_row.pack(fill="x", padx=10, pady=(0, 6))
+        self.output_label = ttk.Label(output_row, text="", foreground="#555")
+        self.output_label.pack(side="left", fill="x", expand=True)
+        self.output_reset_button = ttk.Button(
+            output_row, text="기억 지우기", width=10, command=self._reset_output_dir
         )
-        self.output_label.pack(fill="x", padx=10, pady=(0, 6))
+        self._refresh_output_label()
 
         self.hw_label = ttk.Label(
             self.root, text="하드웨어 확인 중...", foreground="#555", justify="left"
@@ -479,23 +633,62 @@ class SttApp:
         self.log_text.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+        status_row = ttk.Frame(self.root)
+        status_row.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Label(status_row, text=f"버전 {APP_VERSION}", foreground="#777").pack(side="left")
+        self.update_button = ttk.Button(
+            status_row, text="업데이트 확인", command=self._manual_update_check
+        )
+        self.update_button.pack(side="right")
+
         self.root.bind("<Configure>", self._on_resize)
         self._refresh_model_note()
 
     def _choose_files(self) -> None:
-        paths = filedialog.askopenfilenames(title="변환할 오디오 파일 선택", filetypes=AUDIO_FILETYPES)
+        paths = filedialog.askopenfilenames(
+            title="변환할 오디오 파일 선택",
+            filetypes=AUDIO_FILETYPES,
+            initialdir=self.input_dir or "",
+        )
         if not paths:
             return
         self.selected_files = list(paths)
         names = ", ".join(os.path.basename(p) for p in self.selected_files)
         self.files_label.config(text=f"선택된 파일 ({len(self.selected_files)}개): {names}")
+        self.input_dir = os.path.dirname(self.selected_files[0]) or self.input_dir
+        self._remember(input_dir=self.input_dir)
 
     def _choose_output_dir(self) -> None:
-        directory = filedialog.askdirectory(title="출력 폴더 선택")
+        directory = filedialog.askdirectory(
+            title="출력 폴더 선택", initialdir=self.output_dir or self.input_dir or ""
+        )
         if not directory:
             return
         self.output_dir = directory
-        self.output_label.config(text=f"출력 폴더: {directory}")
+        self._refresh_output_label()
+        self._remember(output_dir=directory)
+
+    def _reset_output_dir(self) -> None:
+        """기억해 둔 출력 폴더를 지우고 '원본과 같은 폴더' 동작으로 되돌린다."""
+        self.output_dir = None
+        self._refresh_output_label()
+        self._remember(output_dir=None)
+
+    def _refresh_output_label(self) -> None:
+        if self.output_dir:
+            self.output_label.config(text=f"출력 폴더: {self.output_dir}")
+            self.output_reset_button.pack(side="left", padx=(8, 0))
+        else:
+            self.output_label.config(text="출력 폴더: (원본 파일과 같은 폴더)")
+            self.output_reset_button.pack_forget()
+
+    def _remember(self, **values: object) -> None:
+        for key, value in values.items():
+            if value is None:
+                self.settings.pop(key, None)
+            else:
+                self.settings[key] = value
+        save_settings(self.settings)
 
     # ---- logging ------------------------------------------------------
 
@@ -634,6 +827,196 @@ class SttApp:
                             total_mb = total // (1024 * 1024)
                             self._log(f"  {label}: {pct}% ({mb}MB / {total_mb}MB)")
 
+    # ---- 업데이트 (UI는 메인 스레드, 네트워크는 백그라운드) ---------------
+
+    def _show_release_notes_after_update(self) -> None:
+        """업데이트 직후 첫 실행이면, 받아뒀던 패치노트를 한 번 보여준다."""
+        version = self.settings.get("pending_notes_version")
+        if not isinstance(version, str) or version != APP_VERSION:
+            return
+        notes = self.settings.get("pending_notes")
+        self._remember(pending_notes_version=None, pending_notes=None)
+
+        self._log(f"v{APP_VERSION} 로 업데이트되었습니다.")
+        if not isinstance(notes, str) or not notes.strip():
+            return
+        for line in notes.strip().splitlines():
+            self._log("  " + line)
+        messagebox.showinfo(
+            f"업데이트 완료 (v{APP_VERSION})",
+            "이번 버전에서 달라진 점\n\n" + notes.strip()[:1500],
+        )
+
+    def _maybe_check_update(self) -> None:
+        """자동 확인. 마지막 확인 후 UPDATE_CHECK_INTERVAL 이 지났을 때만 한다."""
+        last = self.settings.get("last_update_check")
+        if isinstance(last, (int, float)) and 0 <= time.time() - last < UPDATE_CHECK_INTERVAL:
+            return
+        threading.Thread(target=self._check_update_worker, daemon=True).start()
+
+    def _manual_update_check(self) -> None:
+        self.update_button.config(state="disabled")
+        self._log("업데이트를 확인하는 중...")
+        threading.Thread(target=self._check_update_worker, args=(True,), daemon=True).start()
+
+    def _check_update_worker(self, manual: bool = False) -> None:
+        try:
+            release, error = fetch_latest_release(), None
+        except Exception as exc:  # 인터넷 없음/차단/GitHub 장애 등
+            release, error = None, exc
+        self.root.after(0, lambda: self._on_update_checked(release, error, manual))
+
+    def _on_update_checked(self, release: Release | None, error: object, manual: bool) -> None:
+        self._remember(last_update_check=int(time.time()))
+        self.update_button.config(state="normal")
+
+        if release is None:
+            self._log("업데이트 확인 실패 (인터넷 연결을 확인하세요).")
+            if manual:
+                messagebox.showwarning(
+                    "업데이트 확인 실패",
+                    "업데이트 정보를 가져오지 못했습니다.\n"
+                    "인터넷 연결을 확인한 뒤 다시 시도해 주세요.\n\n"
+                    f"{error}",
+                )
+            return
+
+        if not is_newer(release.version, APP_VERSION):
+            self._log(f"최신 버전을 쓰고 있습니다 (v{APP_VERSION}).")
+            if manual:
+                messagebox.showinfo("업데이트 확인", f"최신 버전을 쓰고 있습니다 (v{APP_VERSION}).")
+            return
+
+        if not manual and self.settings.get("skip_version") == release.version:
+            self._log(f"새 버전 v{release.version} 이(가) 있지만 건너뛰기로 설정되어 있습니다.")
+            return
+
+        choice = self._ask_update(release)
+        if choice == "skip":
+            self._remember(skip_version=release.version)
+            self._log(f"v{release.version} 업데이트를 건너뜁니다.")
+        elif choice == "now":
+            self._start_update(release)
+
+    def _ask_update(self, release: Release) -> str:
+        """'now' / 'later' / 'skip' 중 하나를 돌려주는 모달 대화상자."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("새 업데이트")
+        dlg.geometry("560x440")
+        dlg.minsize(420, 320)
+        dlg.transient(self.root)
+        choice = {"value": "later"}
+
+        def pick(value: str) -> None:
+            choice["value"] = value
+            dlg.destroy()
+
+        ttk.Label(
+            dlg, text=f"새 버전 {release.version} 이(가) 나왔습니다!", font=("", 12, "bold")
+        ).pack(anchor="w", padx=14, pady=(14, 2))
+        ttk.Label(dlg, text=f"지금 쓰는 버전: {APP_VERSION}", foreground="#555").pack(
+            anchor="w", padx=14
+        )
+        ttk.Label(dlg, text="이번 업데이트 내용", foreground="#555").pack(
+            anchor="w", padx=14, pady=(12, 2)
+        )
+
+        notes_frame = ttk.Frame(dlg)
+        notes_frame.pack(fill="both", expand=True, padx=14)
+        notes_text = tk.Text(notes_frame, wrap="word", height=8)
+        notes_scroll = ttk.Scrollbar(notes_frame, command=notes_text.yview)
+        notes_text.configure(yscrollcommand=notes_scroll.set)
+        notes_text.insert("1.0", release.notes or "(변경 내용이 제공되지 않았습니다)")
+        notes_text.configure(state="disabled")
+        notes_text.pack(side="left", fill="both", expand=True)
+        notes_scroll.pack(side="right", fill="y")
+
+        if release.setup_url:
+            how = (
+                "[지금 업데이트]를 누르면 설치 파일을 내려받고, 프로그램을 닫은 뒤\n"
+                "설치 마법사가 실행됩니다. 설정과 받아둔 모델은 그대로 유지됩니다."
+            )
+        else:
+            how = "[지금 업데이트]를 누르면 다운로드 페이지를 브라우저로 엽니다."
+        ttk.Label(dlg, text=how, foreground="#555", justify="left").pack(
+            anchor="w", padx=14, pady=(10, 0)
+        )
+
+        size_hint = f" ({release.setup_size // (1024 * 1024)}MB)" if release.setup_size else ""
+        row = ttk.Frame(dlg)
+        row.pack(fill="x", padx=14, pady=12)
+        ttk.Button(row, text="지금 업데이트" + size_hint, command=lambda: pick("now")).pack(
+            side="left"
+        )
+        ttk.Button(row, text="나중에", command=lambda: pick("later")).pack(side="left", padx=(8, 0))
+        ttk.Button(row, text="이 버전 건너뛰기", command=lambda: pick("skip")).pack(side="right")
+
+        dlg.protocol("WM_DELETE_WINDOW", lambda: pick("later"))
+        dlg.grab_set()
+        self.root.wait_window(dlg)
+        return choice["value"]
+
+    def _start_update(self, release: Release) -> None:
+        if self.worker and self.worker.is_alive():
+            messagebox.showinfo("작업 진행 중", "변환이 끝난 뒤에 다시 시도해 주세요.")
+            return
+        if not release.setup_url or os.name != "nt":
+            webbrowser.open(release.page_url)
+            return
+
+        # 새 버전으로 다시 켰을 때 보여줄 패치노트를 미리 저장해 둔다.
+        self._remember(pending_notes_version=release.version, pending_notes=release.notes)
+        self.start_button.config(state="disabled")
+        self.update_button.config(state="disabled")
+        self.progress.start(12)
+        self.worker = threading.Thread(target=self._update_worker, args=(release,), daemon=True)
+        self.worker.start()
+
+    def _update_worker(self, release: Release) -> None:
+        try:
+            dest_dir = os.path.join(app_data_dir(), "updates")
+            os.makedirs(dest_dir, exist_ok=True)
+            dest = os.path.join(dest_dir, release.setup_name or "STT_KOR-Setup.exe")
+            self._log(f"업데이트 다운로드 중: {release.setup_name}")
+            self._download_file(release.setup_url, dest, "설치 파일", release.setup_size)
+            self._log("다운로드 완료.")
+            self.root.after(0, lambda: self._launch_installer(dest))
+        except Exception:
+            self._log("업데이트 다운로드 실패:\n" + traceback.format_exc())
+            self.root.after(0, lambda: self._update_download_failed(release))
+        finally:
+            self.root.after(0, self._on_worker_done)
+
+    def _update_download_failed(self, release: Release) -> None:
+        self._remember(pending_notes_version=None, pending_notes=None)
+        if messagebox.askyesno(
+            "업데이트 실패",
+            "설치 파일을 내려받지 못했습니다.\n\n다운로드 페이지를 브라우저로 열까요?",
+        ):
+            webbrowser.open(release.page_url)
+
+    def _launch_installer(self, path: str) -> None:
+        if not messagebox.askokcancel(
+            "설치 시작",
+            "설치 파일을 내려받았습니다.\n\n"
+            "[확인]을 누르면 이 프로그램이 닫히고 설치가 시작됩니다.\n"
+            "설치가 끝나면 바탕화면 아이콘으로 다시 실행해 주세요.",
+        ):
+            self._log(f"설치 파일 위치: {path}")
+            return
+        try:
+            # 실행 파일이 잠겨 있으면 설치가 막힌다. 이 프로그램이 완전히 종료된
+            # 뒤에 설치 마법사가 뜨도록 잠깐 기다렸다가 실행한다.
+            subprocess.Popen(
+                f'ping -n 3 127.0.0.1 >nul & start "" "{path}"',
+                shell=True,
+                creationflags=0x00000008 | 0x08000000,  # DETACHED_PROCESS | CREATE_NO_WINDOW
+            )
+        except Exception:
+            self._log("설치 파일을 실행하지 못했습니다. 직접 실행해 주세요: " + path)
+            return
+        self.root.destroy()
+
     # ---- transcription --------------------------------------------------
 
     def _start(self) -> None:
@@ -735,6 +1118,7 @@ class SttApp:
     def _on_worker_done(self) -> None:
         self.progress.stop()
         self.start_button.config(state="normal")
+        self.update_button.config(state="normal")
 
 
 def main() -> None:

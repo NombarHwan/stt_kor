@@ -13,10 +13,57 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # 이전 태그와 비교해 패치노트를 만들기 위해 전체 이력 필요
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Build patch notes
+        id: notes
+        run: |
+          # 앱의 업데이트 창에 그대로 표시되는 짧은 패치노트.
+          # 1순위: annotated tag 메시지 (git tag -a v1.0.5 -m "- 무엇을 고쳤는지")
+          # 2순위: 이전 태그 이후의 커밋 제목 목록
+          # git 출력(한글 커밋 메시지)이 깨지지 않도록 콘솔 인코딩을 UTF-8로 고정.
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $tag = "${{ github.ref_name }}"
+          $msg = ((git tag -l $tag --format='%(contents:subject)%0a%(contents:body)') -join "`n").Trim()
+          if (-not $msg) {
+            $prev = git describe --tags --abbrev=0 "$tag^"
+            if ($LASTEXITCODE -eq 0 -and $prev) {
+              $msg = ((git log --no-merges --pretty=format:'- %s' "$prev..$tag") -join "`n").Trim()
+            } else {
+              $msg = ((git log --no-merges --pretty=format:'- %s' -n 10 $tag) -join "`n").Trim()
+            }
+          }
+          if (-not $msg) { $msg = "- 소소한 개선과 버그 수정" }
+          Write-Host "패치노트:`n$msg"
+          "text<<STT_PATCH_NOTES" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $msg                    | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "STT_PATCH_NOTES"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $global:LASTEXITCODE = 0
+
+      # 앱이 "지금 쓰는 버전"을 알아야 업데이트 알림을 띄울 수 있다.
+      # PowerShell 대신 Python으로 고쳐 쓴다 (한글 주석이 깨지지 않도록 인코딩을 명시).
+      - name: Stamp version into stt_app.py
+        shell: python
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          import io, os, re, sys
+
+          version = os.environ["TAG"].lstrip("vV")
+          path = "stt_app.py"
+          text = io.open(path, encoding="utf-8", newline="").read()
+          new, count = re.subn(
+              '(?m)^APP_VERSION = "[^"]*"', 'APP_VERSION = "%s"' % version, text
+          )
+          if count != 1:
+              sys.exit("stt_app.py 에서 APP_VERSION 줄을 찾지 못했습니다.")
+          io.open(path, "w", encoding="utf-8", newline="").write(new)
+          print("APP_VERSION =", version)
 
       - name: Install deps
         run: |
@@ -77,7 +124,13 @@ jobs:
             ${{ env.ASSET_ZIP }}
             ${{ env.ASSET_ZIP_SHA }}
           generate_release_notes: true
+          # 아래 "## 이번 업데이트" 섹션은 앱의 업데이트 알림 창에 그대로 표시된다.
+          # 제목 문구를 바꾸면 stt_app.py 의 PATCH_NOTES_HEADING 도 함께 고쳐야 한다.
           body: |
+            ## 이번 업데이트
+
+            ${{ steps.notes.outputs.text }}
+
             ## 설치 방법 (권장)
 
             1. 아래 **STT_KOR-${{ github.ref_name }}-Setup.exe** 를 받아 더블클릭합니다.
@@ -86,6 +139,7 @@ jobs:
             3. 설치가 끝나면 **바탕화면** 또는 **시작 메뉴**의 "한국어 강의 STT" 아이콘으로 실행합니다.
 
             Python 설치도, 관리자 권한도 필요 없습니다.
+            이미 쓰고 있다면 프로그램이 알아서 새 버전을 알려주므로, 알림 창의 **지금 업데이트**만 누르면 됩니다.
 
             ## 압축(zip)으로 받고 싶다면
 
