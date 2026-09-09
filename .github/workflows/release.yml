@@ -32,7 +32,8 @@ jobs:
           # checkout 이 만들어 둔 태그 ref 는 lightweight 라서 annotated 메시지가
           # 딸려오지 않는다. 원본 태그 객체를 강제로 다시 받아온다.
           git fetch --force --tags --quiet origin
-          $msg = ((git tag -l $tag --format='%(contents:subject)%0a%(contents:body)') -join "`n").Trim()
+          # %(contents:subject) 는 첫 문단을 한 줄로 접어버린다. 줄 구분을 살리려면 %(contents).
+          $msg = ((git tag -l $tag --format='%(contents)') -join "`n").Trim()
           if (-not $msg) {
             $prev = git describe --tags --abbrev=0 "$tag^"
             if ($LASTEXITCODE -eq 0 -and $prev) {
