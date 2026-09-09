@@ -26,6 +26,7 @@ import glob
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -43,7 +44,7 @@ APP_DIR_NAME = "STT_KOR"
 
 # 릴리스 워크플로(.github/workflows/release.yml)가 태그 버전으로 이 줄을 덮어쓴다.
 # 형식을 바꾸면 워크플로의 "Stamp version" 단계도 함께 고쳐야 한다.
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 GITHUB_REPO = "NombarHwan/stt_kor"
 RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -89,6 +90,40 @@ AUDIO_FILETYPES = [
     ("오디오 파일", "*.mp3 *.wav *.m4a *.mp4 *.aac *.flac *.ogg *.wma"),
     ("모든 파일", "*.*"),
 ]
+
+
+# ---- 환각(자막 크레딧) 걸러내기 ------------------------------------------
+
+# Whisper는 학습 데이터의 유튜브·방송 자막을 통째로 외웠고, 그 자막이 붙어 있던
+# 구간은 대개 말소리가 없는 구간(엔딩 음악, 정적)이다. 그래서 강의 녹음의 조용한
+# 구간에서 실제 오디오와 무관한 "자막 크레딧" 문장을 뱉는다. vad_filter로 대부분
+# 막히지만, 남는 것들을 아래 패턴으로 마지막에 한 번 더 걸러낸다.
+#
+# 강의 내용을 실수로 지우지 않도록, 짧은 줄(HALLUCINATION_MAX_LEN 이하)이면서
+# 패턴에 걸릴 때만 버린다.
+HALLUCINATION_MAX_LEN = 40
+HALLUCINATION_PATTERNS = [
+    re.compile(r"자막\s*(제공|제작|by|By|BY)"),
+    re.compile(r"(한글|영어)?\s*자막\s*[:：]"),
+    re.compile(r"시청\s*(해|해\s)?\s*주(셔서|셔|시고)?\s*감사"),
+    re.compile(r"구독\s*(과|,|하고|과\s)?\s*좋아요"),
+    re.compile(r"좋아요\s*(와|과|,)?\s*구독"),
+    # "다음 시간에 뵙겠습니다" 는 강의에서 실제로 쓰는 말이라 뺀다. 유튜브 특유의
+    # "다음 영상에서 만나요" 만 잡는다.
+    re.compile(r"다음\s*영상에\s*(서\s*)?(만나|뵙)"),
+    re.compile(r"(MBC|KBS|SBS|YTN|JTBC)\s*뉴스"),
+    re.compile(r"[Ss]ubtitles?\s+by"),
+    re.compile(r"[Aa]mara\.org"),
+    re.compile(r"[Tt]hanks?\s+for\s+watching"),
+]
+
+
+def is_hallucination(text: str) -> bool:
+    """무음 구간에서 나오는 자막 크레딧 문구로 보이면 True."""
+    stripped = text.strip()
+    if not stripped or len(stripped) > HALLUCINATION_MAX_LEN:
+        return False
+    return any(pattern.search(stripped) for pattern in HALLUCINATION_PATTERNS)
 
 
 # ---- 사용자 설정 저장 (마지막 폴더 기억) ---------------------------------
@@ -1091,16 +1126,36 @@ class SttApp:
                     language="ko",
                     beam_size=5,
                     condition_on_previous_text=False,
+                    # hallucination_silence_threshold 는 word_timestamps 가 True 일 때만
+                    # 동작한다 (faster_whisper/transcribe.py 에서 처리 블록이 word_timestamps
+                    # 분기 안에 들어 있다). 켜 두면 무음을 건너뛰어 오히려 더 빠르다.
+                    word_timestamps=True,
                     hallucination_silence_threshold=2.0,
+                    # vad_filter 는 켜지 않는다. faster-whisper 1.2.1 의 Silero VAD 는
+                    # 앞부분에 조용한 구간이 길게 있으면 내부 LSTM 상태가 포화돼 그 뒤
+                    # 말소리를 전부 무음으로 판정한다(같은 구간 단독 입력 시 확률 0.47 ->
+                    # 앞 150초를 붙이면 0.00). 수업 시작 전부터 녹음을 켜 두는 강의
+                    # 파일에서 결과가 통째로 비어버리므로 쓰면 안 된다.
                 )
                 self._log(f"  감지된 언어: {info.language} (확률 {info.language_probability:.2%})")
 
                 lines = []
+                dropped = 0
+                previous_text = None
                 for seg in segments:
+                    text = seg.text.strip()
+                    # 자막 크레딧 환각, 그리고 바로 앞줄과 완전히 똑같은 반복은 버린다.
+                    if is_hallucination(text) or (text and text == previous_text):
+                        dropped += 1
+                        self._log(f"  · 제외(환각 추정): {text}")
+                        continue
+                    previous_text = text
                     timestamp = f"[{seg.start:6.1f}s → {seg.end:6.1f}s]"
-                    line = f"{timestamp} {seg.text.strip()}"
+                    line = f"{timestamp} {text}"
                     self._log("  " + line)
                     lines.append(line)
+                if dropped:
+                    self._log(f"  환각으로 보이는 {dropped}줄을 결과에서 제외했습니다.")
 
                 out_dir = os.path.dirname(output_path)
                 if out_dir:
