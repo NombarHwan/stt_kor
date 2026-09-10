@@ -25,6 +25,7 @@ settings.json에 기억해 두고, 다음 실행 때 복원합니다.
 
 from __future__ import annotations
 
+import base64
 import ctypes
 import glob
 import json
@@ -48,7 +49,7 @@ APP_DIR_NAME = "STT_KOR"
 
 # 릴리스 워크플로(.github/workflows/release.yml)가 태그 버전으로 이 줄을 덮어쓴다.
 # 형식을 바꾸면 워크플로의 "Stamp version" 단계도 함께 고쳐야 한다.
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 
 GITHUB_REPO = "NombarHwan/stt_kor"
 RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -272,6 +273,34 @@ def fetch_latest_release() -> Release | None:
         setup_size=setup_size,
         page_url=data.get("html_url") or RELEASES_PAGE_URL,
     )
+
+
+def installer_launch_command(setup_path: str, pid: int, app_dir: str | None) -> list[str]:
+    """pid 프로세스(이 프로그램)가 완전히 끝난 뒤 설치 파일을 실행하는 명령.
+
+    - 고정 시간만 기다리면, 종료가 늦을 때(모델·GPU 메모리 해제 등) STT_KOR.exe가
+      아직 잠겨 있어 설치 마법사가 exe를 교체하지 못한다. 그래서 종료를 직접 기다린다.
+    - 설치 마법사는 기본적으로 처음 설치했던 폴더(%LOCALAPPDATA%\\Programs\\STT_KOR)에
+      깐다. zip을 풀어 쓰거나 폴더를 옮긴 사용자는 새 버전이 엉뚱한 곳에 깔리고
+      평소 쓰던 바로가기는 옛 버전을 계속 띄우므로, app_dir(지금 실행 중인 폴더)를
+      /DIR로 넘겨 그 자리에 덮어쓴다.
+    한글·공백·작은따옴표가 든 경로도 안전하도록 -EncodedCommand로 넘긴다.
+    """
+
+    def ps_quote(text: str) -> str:
+        return "'" + text.replace("'", "''") + "'"
+
+    script = (
+        f"Wait-Process -Id {int(pid)} -Timeout 120 -ErrorAction SilentlyContinue; "
+        f"Start-Process -FilePath {ps_quote(setup_path)}"
+    )
+    if app_dir:
+        script += " -ArgumentList " + ps_quote('/DIR="' + app_dir.rstrip("\\/") + '"')
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    return [
+        "powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+        "-EncodedCommand", encoded,
+    ]
 
 
 # ---- GPU 감지 및 CUDA 라이브러리 온디맨드 다운로드 ------------------------
@@ -1115,17 +1144,17 @@ class SttApp:
             "설치 시작",
             "설치 파일을 내려받았습니다.\n\n"
             "[확인]을 누르면 이 프로그램이 닫히고 설치가 시작됩니다.\n"
-            "설치가 끝나면 바탕화면 아이콘으로 다시 실행해 주세요.",
+            "설치가 끝나면 마지막 화면의 '지금 실행'을 누르거나,\n"
+            "평소 쓰던 아이콘으로 다시 실행하면 새 버전이 뜹니다.",
         ):
             self._log(f"설치 파일 위치: {path}")
             return
+        # exe 로 실행 중이면 지금 이 폴더에 덮어쓴다. 소스로 실행 중이면 설치 마법사 기본값.
+        app_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else None
         try:
-            # 실행 파일이 잠겨 있으면 설치가 막힌다. 이 프로그램이 완전히 종료된
-            # 뒤에 설치 마법사가 뜨도록 잠깐 기다렸다가 실행한다.
             subprocess.Popen(
-                f'ping -n 3 127.0.0.1 >nul & start "" "{path}"',
-                shell=True,
-                creationflags=0x00000008 | 0x08000000,  # DETACHED_PROCESS | CREATE_NO_WINDOW
+                installer_launch_command(path, os.getpid(), app_dir),
+                creationflags=0x00000200 | 0x08000000,  # CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
             )
         except Exception:
             self._log("설치 파일을 실행하지 못했습니다. 직접 실행해 주세요: " + path)
