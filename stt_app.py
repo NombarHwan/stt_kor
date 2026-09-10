@@ -11,8 +11,12 @@ Python이나 pip 없이도 실행할 수 있도록 PyInstaller로 exe 패키징�
 주고(recommend_model), 사용자가 모델을 바꾸면 예상 처리 시간·품질·메모리
 경고 등 주의사항을 화면에 표시합니다(model_notices).
 
-마지막으로 쓴 오디오 폴더와 출력 폴더는 %LOCALAPPDATA%/STT_KOR/settings.json에
-기억해 두고, 다음 실행 때 파일 선택 창의 시작 위치와 출력 폴더로 복원합니다.
+인식 언어는 한국어/영어/자동 감지 중에서 고릅니다(LANGUAGES). Whisper 다국어
+모델이라 같은 모델 파일로 모든 언어를 처리하므로 언어를 바꿔도 추가 다운로드는
+없습니다.
+
+마지막으로 쓴 오디오 폴더와 출력 폴더, 인식 언어는 %LOCALAPPDATA%/STT_KOR/
+settings.json에 기억해 두고, 다음 실행 때 복원합니다.
 
 실행하면 GitHub 릴리스를 확인해(하루 몇 번으로 제한) 새 버전이 있으면 패치노트와
 함께 알려주고, 설치 파일을 내려받아 설치 마법사를 띄웁니다. APP_VERSION 줄은
@@ -44,7 +48,7 @@ APP_DIR_NAME = "STT_KOR"
 
 # 릴리스 워크플로(.github/workflows/release.yml)가 태그 버전으로 이 줄을 덮어쓴다.
 # 형식을 바꾸면 워크플로의 "Stamp version" 단계도 함께 고쳐야 한다.
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 
 GITHUB_REPO = "NombarHwan/stt_kor"
 RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -86,6 +90,20 @@ EST_TIME = {
     "large-v3": {"gpu": "5~12분", "cpu_strong": "2~4시간", "cpu_weak": "5시간 이상"},
 }
 
+# 인식 언어. Whisper 다국어 모델(tiny~large-v3)은 약 100개 언어를 지원한다.
+# (표시 이름, Whisper 언어 코드). 코드가 None 이면 오디오 앞부분으로 자동 감지.
+# 설정 파일에는 코드(자동 감지는 "auto")로 저장한다.
+LANGUAGES = [
+    ("한국어", "ko"),
+    ("English", "en"),
+    ("자동 감지", None),
+]
+DEFAULT_LANGUAGE = "ko"
+# 자동 감지 시 앞에서부터 최대 몇 개의 30초 구간을 볼지. 강의 녹음은 수업 전
+# 잡음·정적으로 시작하는 경우가 많아 첫 30초만 보면 틀리기 쉽다. 확신(0.5 초과)이
+# 서는 구간에서 바로 멈추므로 대부분은 첫 구간만 보고 끝난다.
+LANGUAGE_DETECTION_SEGMENTS = 4
+
 AUDIO_FILETYPES = [
     ("오디오 파일", "*.mp3 *.wav *.m4a *.mp4 *.aac *.flac *.ogg *.wma"),
     ("모든 파일", "*.*"),
@@ -115,6 +133,11 @@ HALLUCINATION_PATTERNS = [
     re.compile(r"[Ss]ubtitles?\s+by"),
     re.compile(r"[Aa]mara\.org"),
     re.compile(r"[Tt]hanks?\s+for\s+watching"),
+    re.compile(r"[Tt]hank\s+you\s+(so\s+much\s+|very\s+much\s+)?for\s+watching"),
+    re.compile(r"[Ll]ike\s+and\s+subscribe"),
+    re.compile(r"[Ss]ubscribe\s+to\s+(my|our|the)\s+channel"),
+    # "see you next time" 은 강의에서 실제로 쓰는 말이라 뺀다.
+    re.compile(r"[Ss]ee\s+you\s+in\s+the\s+next\s+video"),
 ]
 
 
@@ -529,15 +552,53 @@ def _model_cached(model: str) -> bool:
     return False
 
 
-def model_notices(model: str, hw: Hardware | None) -> list[tuple[str, str]]:
-    """선택한 모델에 대한 (수준, 문구) 목록. 수준은 'warn' 또는 'info'."""
+def language_code(label: str) -> str | None:
+    """콤보박스 표시 이름 -> Whisper 언어 코드 (자동 감지는 None)."""
+    for name, code in LANGUAGES:
+        if name == label:
+            return code
+    return DEFAULT_LANGUAGE
+
+
+def language_label(code: object) -> str:
+    """설정에 저장된 코드("ko"/"en"/"auto") -> 콤보박스 표시 이름.
+    저장된 값이 없거나(None) 모르는 값이면 기본 언어."""
+    for name, c in LANGUAGES:
+        if (c or "auto") == code:
+            return name
+    return next(name for name, c in LANGUAGES if c == DEFAULT_LANGUAGE)
+
+
+def model_notices(
+    model: str, hw: Hardware | None, language: str | None = DEFAULT_LANGUAGE
+) -> list[tuple[str, str]]:
+    """선택한 모델·언어에 대한 (수준, 문구) 목록. 수준은 'warn' 또는 'info'."""
     backend = _model_backend(hw)
     est = EST_TIME[model][backend]
     where = "GPU 사용 시" if backend == "gpu" else "CPU 사용"
+    quality = MODEL_INFO[model]["quality"]
+    if language != "ko":
+        quality += " (한국어 기준)"
     out: list[tuple[str, str]] = [
         ("info", f"1시간 분량 기준 예상 처리 시간: 약 {est} ({where})"),
-        ("info", f"품질: {MODEL_INFO[model]['quality']}"),
+        ("info", f"품질: {quality}"),
     ]
+    if language == "en":
+        out.append(
+            (
+                "info",
+                "영어는 Whisper가 가장 많이 학습한 언어라 같은 모델에서 대체로 "
+                "한국어보다 정확합니다.",
+            )
+        )
+    elif language is None:
+        out.append(
+            (
+                "info",
+                "자동 감지는 녹음 앞부분으로 언어를 판단합니다. 강의 언어를 알고 있다면 "
+                "직접 고르는 편이 정확합니다.",
+            )
+        )
     if not _model_cached(model):
         out.append(
             ("info", f"이 모델을 처음 쓰면 최초 1회 {MODEL_INFO[model]['download']}를 내려받습니다.")
@@ -632,6 +693,18 @@ class SttApp:
         )
         model_combo.pack(side="left")
         model_combo.bind("<<ComboboxSelected>>", self._on_model_selected)
+
+        ttk.Label(top, text="언어:").pack(side="left", padx=(12, 4))
+        self.language_var = tk.StringVar(value=language_label(self.settings.get("language")))
+        language_combo = ttk.Combobox(
+            top,
+            textvariable=self.language_var,
+            values=[name for name, _ in LANGUAGES],
+            width=9,
+            state="readonly",
+        )
+        language_combo.pack(side="left")
+        language_combo.bind("<<ComboboxSelected>>", self._on_language_selected)
 
         self.files_label = ttk.Label(self.root, text="선택된 파일 없음", foreground="#555")
         self.files_label.pack(fill="x", padx=10)
@@ -773,8 +846,15 @@ class SttApp:
         self.model_user_touched = True
         self._refresh_model_note()
 
+    def _on_language_selected(self, _event: object = None) -> None:
+        code = language_code(self.language_var.get())
+        self._remember(language=code or "auto")
+        self._refresh_model_note()
+
     def _refresh_model_note(self) -> None:
-        notices = model_notices(self.model_var.get(), self.hw)
+        notices = model_notices(
+            self.model_var.get(), self.hw, language_code(self.language_var.get())
+        )
         has_warn = any(level == "warn" for level, _ in notices)
         lines = [("⚠ " if level == "warn" else "· ") + text for level, text in notices]
         self.model_note_label.config(
@@ -1074,7 +1154,8 @@ class SttApp:
     def _confirm_model_choice(self) -> bool:
         """선택한 모델에 경고(warn) 수준 주의사항이 있으면 진행 여부를 되묻는다."""
         model = self.model_var.get()
-        warns = [text for level, text in model_notices(model, self.hw) if level == "warn"]
+        notices = model_notices(model, self.hw, language_code(self.language_var.get()))
+        warns = [text for level, text in notices if level == "warn"]
         if not warns:
             return True
         body = (
@@ -1110,7 +1191,9 @@ class SttApp:
                 self.pending_cuda_download = False
 
             model_size = self.model_var.get()
+            language = language_code(self.language_var.get())
             model = self._ensure_model(model_size)
+            self._log(f"인식 언어: {language_label(language or 'auto')}")
 
             total = len(self.selected_files)
             for i, audio_path in enumerate(self.selected_files, start=1):
@@ -1123,7 +1206,8 @@ class SttApp:
 
                 segments, info = model.transcribe(
                     audio_path,
-                    language="ko",
+                    language=language,
+                    language_detection_segments=LANGUAGE_DETECTION_SEGMENTS,
                     beam_size=5,
                     condition_on_previous_text=False,
                     # hallucination_silence_threshold 는 word_timestamps 가 True 일 때만
@@ -1137,7 +1221,10 @@ class SttApp:
                     # 앞 150초를 붙이면 0.00). 수업 시작 전부터 녹음을 켜 두는 강의
                     # 파일에서 결과가 통째로 비어버리므로 쓰면 안 된다.
                 )
-                self._log(f"  감지된 언어: {info.language} (확률 {info.language_probability:.2%})")
+                if language is None:
+                    self._log(
+                        f"  감지된 언어: {info.language} (확률 {info.language_probability:.2%})"
+                    )
 
                 lines = []
                 dropped = 0
