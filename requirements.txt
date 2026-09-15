@@ -1,0 +1,19 @@
+# 소스로 실행할 때 필요한 것 (GUI/CLI 공통):
+#   pip install -r requirements.txt
+#   python stt_app.py            -> GUI
+#   python stt_app.py 0910       -> CLI
+#
+# tkinter 는 파이썬에 포함돼 있어 따로 설치하지 않습니다.
+# ffmpeg 도 필요 없습니다 (오디오 디코딩은 faster-whisper 가 쓰는 PyAV 에 포함).
+faster-whisper>=1.2.1
+
+# GPU(선택). 넣지 않아도 됩니다 - NVIDIA GPU가 있으면 앱이 첫 변환 때 물어보고
+# %LOCALAPPDATA%\STT_KOR\cuda_libs 에 직접 받아 씁니다(설치본과 공유). pip 로
+# 관리하고 싶을 때만 아래 주석을 풀어 쓰세요. 버전은 stt_app.py 의 CUDA_PACKAGES
+# 와 맞춰 두었습니다.
+# nvidia-cublas-cu12==12.9.2.10
+# nvidia-cudnn-cu12==9.25.1.1
+# nvidia-cuda-nvrtc-cu12==12.9.86
+
+# 빌드용(배포 exe를 직접 만들 때만): build_exe.ps1 참고
+# pyinstaller

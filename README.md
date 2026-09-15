@@ -12,6 +12,26 @@
 ## 개발자 옵션 (CLI)
 소스로 실행할 때 인자를 주면 창을 띄우지 않고 터미널에서 바로 변환합니다. 인자가 없으면 지금처럼 GUI가 뜹니다.
 
+설치본(exe)을 쓰는 일반 사용자는 신경 쓰지 않아도 됩니다. CLI를 쓰려면 설치 마법사 대신 **이 저장소를 받아 소스로 실행**하세요.
+
+### 준비
+```
+git clone https://github.com/NombarHwan/stt_kor.git
+cd stt_kor
+pip install -r requirements.txt
+python stt_app.py --help
+```
+
+- **Python 3.10 이상**이면 됩니다 (릴리스 빌드는 3.12, 개발 환경은 3.14에서 동작 확인). python.org 설치본에 tkinter가 들어 있어 GUI도 그대로 뜹니다.
+- **ffmpeg를 따로 깔 필요 없습니다.** 오디오 디코딩은 PyAV에 포함된 바이너리가 처리합니다.
+- **설정·모델 캐시·CUDA 라이브러리를 설치본과 공유**합니다(`%LOCALAPPDATA%`). 설치본을 쓰던 PC라면 기억해 둔 폴더와 이미 받아둔 모델을 그대로 재사용합니다.
+- **GPU(선택)**: NVIDIA GPU가 있으면 첫 변환 때 CUDA 라이브러리(약 1.3GB) 다운로드 여부를 물어보고 `%LOCALAPPDATA%`에 캐싱합니다. pip로 직접 넣고 싶다면 아래를 설치해도 인식합니다.
+  ```
+  pip install nvidia-cublas-cu12==12.9.2.10 nvidia-cudnn-cu12==9.25.1.1 nvidia-cuda-nvrtc-cu12==12.9.86
+  ```
+- 업데이트는 `git pull`입니다. 앱 내장 자동 업데이터(설치본 덮어쓰기)는 소스 실행에는 관여하지 않습니다.
+
+### 사용법
 ```
 python stt_app.py 0910                    # 녹음 폴더에서 이름에 0910이 든 오디오 전부
 python stt_app.py 컴퓨터구조 정보보호      # 검색어 여러 개
