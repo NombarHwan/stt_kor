@@ -58,7 +58,7 @@ APP_DIR_NAME = "STT_KOR"
 
 # 릴리스 워크플로(.github/workflows/release.yml)가 태그 버전으로 이 줄을 덮어쓴다.
 # 형식을 바꾸면 워크플로의 "Stamp version" 단계도 함께 고쳐야 한다.
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 
 GITHUB_REPO = "NombarHwan/stt_kor"
 RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
