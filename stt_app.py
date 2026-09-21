@@ -1,4 +1,9 @@
-"""한국어 강의 STT - 간단한 데스크톱 앱.
+"""Transcribe to Learn (TTL) - 강의 녹음을 받아쓰는 데스크톱 앱.
+
+표시 이름은 "Transcribe to Learn" 이지만, 설치 폴더·설정 경로(APP_DIR_NAME)·
+exe 이름·설치 마법사 AppId 는 STT_KOR 그대로 둔다. 바꾸면 기존 사용자가
+업그레이드가 아니라 별도 앱으로 설치되고, 기억해 둔 폴더 설정과 이미 받아둔
+CUDA 라이브러리(약 1.3GB)를 잃는다.
 
 Python이나 pip 없이도 실행할 수 있도록 PyInstaller로 exe 패키징하는 것을
 전제로 만들어졌습니다 (build_exe.ps1 참고). exe 자체는 CPU 전용으로 작게
@@ -54,11 +59,32 @@ from dataclasses import dataclass
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
+# HuggingFace 캐시의 심볼릭 링크를 끈다. faster_whisper(=huggingface_hub)를
+# import 하기 전에 걸어야 한다 - huggingface_hub.constants 가 import 시점에
+# 환경변수를 한 번만 읽기 때문이다.
+#
+# 이유: 관리자 권한도 개발자 모드도 없는 Windows(= 우리 사용자 대부분, 설치
+# 마법사도 PrivilegesRequired=lowest 로 돈다)에서 모델을 "처음" 받을 때
+# huggingface_hub 가 크래시한다.
+#   1. are_symlinks_supported() 는 지원 여부를 실제로 검사하기 "전에" 캐시
+#      딕셔너리에 True 를 먼저 써 넣는다.
+#   2. 모델 파일은 여러 스레드가 동시에 받는다. 검사가 끝나기 전에 들어온
+#      스레드는 그 True 를 읽고 os.symlink() 를 호출한다.
+#   3. 그 os.symlink() 는 WinError 1314 로 실패하는데, 이게 PermissionError 가
+#      아니라 그냥 OSError 라서 _create_symlink() 의 except PermissionError
+#      방어를 그대로 통과한다. -> 변환이 통째로 죽는다.
+# 이 변수를 켜면 검사 자체를 건너뛰고 항상 복사본을 쓰므로 경쟁 자체가 없다.
+# (디스크를 조금 더 쓰지만, 우리는 어차피 스냅샷 하나만 보관한다.)
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
+# 위를 켜면 huggingface_hub 가 "심볼릭 링크를 못 씁니다" 경고를 띄우는데,
+# 일반 사용자에게는 겁만 주는 문구라 끈다.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
 APP_DIR_NAME = "STT_KOR"
 
 # 릴리스 워크플로(.github/workflows/release.yml)가 태그 버전으로 이 줄을 덮어쓴다.
 # 형식을 바꾸면 워크플로의 "Stamp version" 단계도 함께 고쳐야 한다.
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.1.0"
 
 GITHUB_REPO = "NombarHwan/stt_kor"
 RELEASES_PAGE_URL = f"https://github.com/{GITHUB_REPO}/releases/latest"
@@ -920,7 +946,7 @@ def transcribe_file(
 class SttApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title(f"한국어 강의 STT v{APP_VERSION}")
+        self.root.title(f"Transcribe to Learn v{APP_VERSION}")
         self.root.geometry("640x600")
         self.root.minsize(520, 480)
 
@@ -1533,7 +1559,7 @@ def _cli_language(flag: str | None, settings: dict) -> str | None:
 def build_cli_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="stt_app.py",
-        description="한국어 강의 STT - 터미널에서 바로 쓰는 개발자용 모드.",
+        description="Transcribe to Learn (TTL) - 터미널에서 바로 쓰는 개발자용 모드.",
         epilog=CLI_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1561,7 +1587,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--save", action="store_true", help="이번에 준 폴더/언어를 기본값으로 기억 (GUI와 공유)"
     )
-    parser.add_argument("--version", action="version", version=f"STT_KOR {APP_VERSION}")
+    parser.add_argument("--version", action="version", version=f"Transcribe to Learn (TTL) {APP_VERSION}")
     return parser
 
 

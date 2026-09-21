@@ -1,4 +1,7 @@
-; STT_KOR - Inno Setup 설치 마법사
+; Transcribe to Learn (TTL) - Inno Setup 설치 마법사
+;
+; 표시 이름만 바뀌었고 AppId·설치 폴더·exe 이름은 STT_KOR 그대로다.
+; AppId 를 바꾸면 기존 설치본을 덮어쓰지 않고 별도 앱으로 깔린다.
 ;
 ; PyInstaller onedir 산출물(dist\STT_KOR\)을 하나의 Setup.exe 로 묶는다.
 ; 목적: 비전공 사용자가 Python/pip/PATH/관리자권한 없이 더블클릭만으로
@@ -15,7 +18,7 @@
   #define AppVersion "0.0.0"
 #endif
 
-#define AppName "한국어 강의 STT"
+#define AppName "Transcribe to Learn"
 #define AppExeName "STT_KOR.exe"
 #define AppPublisher "NombarHwan"
 #define AppURL "https://github.com/NombarHwan/stt_kor"
@@ -30,6 +33,7 @@ AppSupportURL={#AppURL}/issues
 AppUpdatesURL={#AppURL}/releases
 DefaultDirName={autopf}\STT_KOR
 DefaultGroupName=STT_KOR
+SetupIconFile=assets\TTL.ico
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
 OutputDir=installer_out
