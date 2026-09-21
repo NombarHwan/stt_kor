@@ -11,9 +11,11 @@ Python이나 pip 없이도 실행할 수 있도록 PyInstaller로 exe 패키징�
 주고(recommend_model), 사용자가 모델을 바꾸면 예상 처리 시간·품질·메모리
 경고 등 주의사항을 화면에 표시합니다(model_notices).
 
-인식 언어는 한국어/영어/자동 감지 중에서 고릅니다(LANGUAGES). Whisper 다국어
-모델이라 같은 모델 파일로 모든 언어를 처리하므로 언어를 바꿔도 추가 다운로드는
-없습니다.
+인식 언어는 한국어/영어/자동 감지 중에서 고릅니다(LANGUAGES). 영어로 "고정"한
+경우에는 같은 등급의 영어 전용 모델로 자동으로 바꿔 씁니다(ENGLISH_MODEL_REPOS).
+영어 전용 모델은 영어에 더 정확한 대신 한국어를 만나면 결과가 망가지므로 자동
+감지에서는 쓰지 않습니다. 언어에 따라 받는 모델 파일이 달라지므로, 영어를 처음
+고르면 추가 다운로드가 생길 수 있습니다.
 
 마지막으로 쓴 오디오 폴더와 출력 폴더, 인식 언어는 %LOCALAPPDATA%/STT_KOR/
 settings.json에 기억해 두고, 다음 실행 때 복원합니다.
@@ -75,28 +77,95 @@ CUDA_PACKAGES = [
     ("nvidia-cuda-nvrtc-cu12", "12.9.86"),
 ]
 
-MODEL_SIZES = ["large-v3", "medium", "small", "base", "tiny"]
+MODEL_SIZES = ["large-v3", "turbo", "medium", "small", "base", "tiny"]
 # 하드웨어 감지 전까지 쓰는 잠정 기본값. 감지가 끝나면 recommend_model()이
 # 사용자가 아직 콤보박스를 건드리지 않은 경우에 한해 권장값으로 바꾼다.
 DEFAULT_MODEL_SIZE = "medium"
 
-# 모델별 최초 1회 다운로드 용량과 한국어 강의 기준 품질 설명.
+# 콤보박스에 보이는 모델 키 -> 실제로 내려받는 CTranslate2 저장소.
+#
+# faster-whisper 에 내장된 짧은 이름("large-v3" 등)을 그대로 넘겨도 동작하지만,
+# 저장소를 적어 두면 (1) 캐시 확인(_model_cached)을 정확히 할 수 있고
+# (2) 업스트림이 별칭을 바꿔도 받는 모델이 흔들리지 않는다. 실제로 1.2.1 의
+# turbo 별칭이 가리키는 mobiuslabsgmbh 저장소는 소유자가 바뀌어 지금은
+# HuggingFace 리다이렉트로만 접근되므로, turbo 는 저장소를 직접 지정한다.
+MODEL_REPOS = {
+    "large-v3": "Systran/faster-whisper-large-v3",
+    "turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
+    "medium": "Systran/faster-whisper-medium",
+    "small": "Systran/faster-whisper-small",
+    "base": "Systran/faster-whisper-base",
+    "tiny": "Systran/faster-whisper-tiny",
+}
+
+# 인식 언어를 영어로 "고정"했을 때만 대신 쓰는 영어 전용 모델.
+#
+# 같은 크기에서 영어 전용 모델이 다국어 모델보다 영어에 정확하고, 이득은
+# base 쪽에서 가장 크다(크기가 커질수록 차이는 줄어든다). medium 자리에는
+# distil 판을 쓴다 - 디코더가 24층에서 2층으로 줄어 용량은 절반인데 영어 품질은
+# medium 급이라, GPU 없는 환경에서 체감이 가장 크다.
+#
+# large-v3 / turbo 에는 영어 전용판이 없다(large 에는 애초에 .en 이 없다).
+# 그 등급에서는 다국어 모델이 영어에서도 최고 성능이라 바꿀 이유도 없다.
+#
+# 주의: 영어 전용 모델은 한국어를 만나면 그 구간을 통째로 망친다. 그래서 언어가
+# "en" 으로 확정됐을 때만 쓰고, 자동 감지(None)에서는 절대 쓰지 않는다.
+ENGLISH_MODEL_REPOS = {
+    "medium": "Systran/faster-distil-whisper-medium.en",
+    "small": "Systran/faster-whisper-small.en",
+    "base": "Systran/faster-whisper-base.en",
+    "tiny": "Systran/faster-whisper-tiny.en",
+}
+
+# 저장소별 최초 1회 다운로드 용량.
+DOWNLOAD_SIZE = {
+    "Systran/faster-whisper-large-v3": "약 3.1 GB",
+    "deepdml/faster-whisper-large-v3-turbo-ct2": "약 1.6 GB",
+    "Systran/faster-whisper-medium": "약 1.5 GB",
+    "Systran/faster-whisper-small": "약 480 MB",
+    "Systran/faster-whisper-base": "약 145 MB",
+    "Systran/faster-whisper-tiny": "약 75 MB",
+    "Systran/faster-distil-whisper-medium.en": "약 790 MB",
+    "Systran/faster-whisper-small.en": "약 480 MB",
+    "Systran/faster-whisper-base.en": "약 145 MB",
+    "Systran/faster-whisper-tiny.en": "약 75 MB",
+}
+
+# 모델별 한국어 강의 기준 품질 설명.
 MODEL_INFO = {
-    "tiny": {"download": "약 75 MB", "quality": "매우 낮음 — 키워드 수준, 받아쓰기 부적합"},
-    "base": {"download": "약 145 MB", "quality": "낮음 — 대략적인 내용 파악용"},
-    "small": {"download": "약 480 MB", "quality": "보통 — 깨끗한 녹음이면 요지 파악, 교정 많이 필요"},
-    "medium": {"download": "약 1.5 GB", "quality": "좋음 — 일반 강의는 신뢰할 만함, 가벼운 교정"},
-    "large-v3": {"download": "약 3.1 GB", "quality": "최상 — 전문용어·숫자에 강함, 거의 교정 불필요"},
+    "tiny": {"quality": "매우 낮음 — 키워드 수준, 받아쓰기 부적합"},
+    "base": {"quality": "낮음 — 대략적인 내용 파악용"},
+    "small": {"quality": "보통 — 깨끗한 녹음이면 요지 파악, 교정 많이 필요"},
+    "medium": {"quality": "좋음 — 일반 강의는 신뢰할 만함, 가벼운 교정"},
+    "turbo": {"quality": "최상 — large-v3에 준하는 품질을 몇 배 빠르게"},
+    "large-v3": {"quality": "최상 — 전문용어·숫자에 강함, 거의 교정 불필요"},
 }
 
 # 1시간 분량 오디오 기준 예상 처리 시간. backend: gpu / cpu_strong / cpu_weak.
+#
+# turbo 는 large-v3 와 인코더(32층)가 같고 디코더만 32층 -> 4층으로 줄어든
+# 모델이다. 그래서 디코딩이 지배적인 GPU 에서 이득이 가장 크고, 인코더 비중이
+# 커지는 CPU 에서는 배수가 그만큼 나오지 않는다.
 EST_TIME = {
     "tiny": {"gpu": "1분 내외", "cpu_strong": "3~6분", "cpu_weak": "10~15분"},
     "base": {"gpu": "1~2분", "cpu_strong": "5~10분", "cpu_weak": "15~25분"},
     "small": {"gpu": "2~4분", "cpu_strong": "15~30분", "cpu_weak": "40~70분"},
     "medium": {"gpu": "3~6분", "cpu_strong": "45~90분", "cpu_weak": "2~3시간"},
+    "turbo": {"gpu": "2~5분", "cpu_strong": "1~2시간", "cpu_weak": "4시간 이상"},
     "large-v3": {"gpu": "5~12분", "cpu_strong": "2~4시간", "cpu_weak": "5시간 이상"},
 }
+
+
+def uses_english_only_model(model: str, language: str | None) -> bool:
+    """영어 전용 모델로 바꿔 쓰는 조합인지. 자동 감지(None)에서는 항상 False."""
+    return language == "en" and model in ENGLISH_MODEL_REPOS
+
+
+def resolve_model_repo(model: str, language: str | None) -> str:
+    """콤보박스 선택값 + 인식 언어 -> 실제로 로드할 저장소 이름."""
+    if uses_english_only_model(model, language):
+        return ENGLISH_MODEL_REPOS[model]
+    return MODEL_REPOS[model]
 
 # 인식 언어. Whisper 다국어 모델(tiny~large-v3)은 약 100개 언어를 지원한다.
 # (표시 이름, Whisper 언어 코드). 코드가 None 이면 오디오 앞부분으로 자동 감지.
@@ -525,20 +594,23 @@ def detect_hardware() -> Hardware:
     return Hardware(ram, cpu_name or "", cores, threads, has_nvidia, gpu_name, vram)
 
 
-def recommend_model(hw: Hardware | None) -> tuple[str, str]:
-    """(권장 모델, 이유 문구)."""
+def recommend_model(
+    hw: Hardware | None, language: str | None = DEFAULT_LANGUAGE
+) -> tuple[str, str]:
+    """(권장 모델, 이유 문구).
+
+    언어를 함께 받는 이유: 영어로 고정하면 medium 이하가 영어 전용 모델로 바뀌어
+    같은 등급에서도 더 정확해지므로, 저사양 구간의 권장이 달라진다."""
     if hw is None:
         return "medium", "하드웨어를 확인하지 못해 안전한 기본값(medium)을 사용합니다."
     if hw.has_nvidia:
-        if hw.vram_gb is None or hw.vram_gb >= 5.5:
+        # turbo 는 large-v3 와 품질이 사실상 같으면서 파일도 VRAM 도 절반 수준이라,
+        # 예전에 medium 으로 내려보내던 중급 GPU 까지 최고 품질로 끌어올릴 수 있다.
+        if hw.vram_gb is None or hw.vram_gb >= 3.5:
             return (
-                "large-v3",
-                f"NVIDIA GPU 감지 ({hw.gpu_name or '모델명 미상'}) — 최고 품질 모델을 쓸 수 있습니다.",
-            )
-        if hw.vram_gb >= 3.5:
-            return (
-                "medium",
-                f"NVIDIA GPU VRAM 약 {hw.vram_gb:.0f}GB — large-v3에는 부족해 medium을 권장합니다.",
+                "turbo",
+                f"NVIDIA GPU 감지 ({hw.gpu_name or '모델명 미상'}) — "
+                "최고 품질(turbo)을 빠르게 쓸 수 있습니다.",
             )
         return "small", f"NVIDIA GPU VRAM 약 {hw.vram_gb:.0f}GB — small을 권장합니다."
     ram = hw.ram_gb or 8.0
@@ -553,6 +625,12 @@ def recommend_model(hw: Hardware | None) -> tuple[str, str]:
             "small",
             f"GPU 없음 · RAM {ram:.0f}GB · {cores}코어 — small을 권장합니다 "
             "(medium은 1시간 강의에 1시간 이상 걸립니다).",
+        )
+    if language == "en":
+        return (
+            "base",
+            f"GPU 없음 · 저사양 (RAM {ram:.0f}GB) — base를 권장합니다 "
+            "(영어 전용 모델로 실행되어 같은 등급의 한국어보다는 정확합니다).",
         )
     return (
         "base",
@@ -569,9 +647,12 @@ def _model_backend(hw: Hardware | None) -> str:
     return "cpu_strong" if (cores and cores >= 6 and ram >= 15) else "cpu_weak"
 
 
-def _model_cached(model: str) -> bool:
-    """faster-whisper(HuggingFace 캐시)에 모델이 이미 받아져 있는지 추정."""
-    name = model.replace("/", "--")
+def _model_cached(repo: str) -> bool:
+    """HuggingFace 캐시에 이 저장소가 이미 받아져 있는지 확인.
+
+    저장소 이름(owner/name)을 그대로 캐시 폴더명으로 바꿔 보므로, .en 이나
+    distil 처럼 이름 규칙이 다른 모델도 정확히 잡힌다."""
+    folder = "models--" + repo.replace("/", "--")
     bases = []
     for var in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
         if os.environ.get(var):
@@ -581,7 +662,8 @@ def _model_cached(model: str) -> bool:
     bases.append(os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"))
     for b in bases:
         try:
-            if glob.glob(os.path.join(b, f"models--*faster-whisper-{name}*")):
+            # 받다 만 저장소도 폴더는 남으므로 가중치 파일까지 있는지 본다.
+            if glob.glob(os.path.join(b, folder, "snapshots", "*", "model.bin")):
                 return True
         except Exception:
             pass
@@ -610,6 +692,8 @@ def model_notices(
 ) -> list[tuple[str, str]]:
     """선택한 모델·언어에 대한 (수준, 문구) 목록. 수준은 'warn' 또는 'info'."""
     backend = _model_backend(hw)
+    repo = resolve_model_repo(model, language)
+    english_only = uses_english_only_model(model, language)
     est = EST_TIME[model][backend]
     where = "GPU 사용 시" if backend == "gpu" else "CPU 사용"
     quality = MODEL_INFO[model]["quality"]
@@ -635,22 +719,48 @@ def model_notices(
                 "직접 고르는 편이 정확합니다.",
             )
         )
-    if not _model_cached(model):
+    if english_only:
         out.append(
-            ("info", f"이 모델을 처음 쓰면 최초 1회 {MODEL_INFO[model]['download']}를 내려받습니다.")
+            (
+                "info",
+                f"영어 전용 모델({repo.rsplit('/', 1)[-1]})로 실행됩니다. 같은 크기의 "
+                "다국어 모델보다 영어에 정확하지만, 강의 중 한국어가 섞이면 그 구간은 "
+                "잘못 인식됩니다. 한국어가 섞이는 수업이면 turbo나 large-v3를 쓰세요.",
+            )
+        )
+        if model == "medium":
+            out.append(
+                ("info", "이 조합은 디코더를 줄인 distil 판이라 위 예상 시간보다 빠릅니다.")
+            )
+    if not _model_cached(repo):
+        out.append(
+            ("info", f"이 모델을 처음 쓰면 최초 1회 {DOWNLOAD_SIZE[repo]}를 내려받습니다.")
         )
 
     ram = hw.ram_gb if hw else None
-    if model == "large-v3":
-        if backend != "gpu":
-            out.append(
-                ("warn", "GPU를 쓰지 않아 처리 시간이 매우 깁니다. medium 이하를 권장합니다.")
-            )
-        if ram is not None and ram < 12:
+    if model in ("large-v3", "turbo"):
+        if model == "large-v3" and backend != "gpu":
             out.append(
                 (
                     "warn",
-                    f"large-v3는 RAM 16GB를 권장합니다. 현재 약 {ram:.0f}GB로 "
+                    "GPU를 쓰지 않아 처리 시간이 매우 깁니다. 같은 품질에 훨씬 빠른 "
+                    "turbo나, medium 이하를 권장합니다.",
+                )
+            )
+        elif model == "turbo" and backend != "gpu":
+            out.append(
+                (
+                    "warn",
+                    "turbo는 large-v3와 인코더가 같아 GPU 없이는 1시간 분량에 1시간 "
+                    "이상 걸립니다. CPU만 쓴다면 medium 이하를 권장합니다.",
+                )
+            )
+        ram_need = 16 if model == "large-v3" else 8
+        if ram is not None and ram < ram_need * 0.75:
+            out.append(
+                (
+                    "warn",
+                    f"{model}는 RAM {ram_need}GB를 권장합니다. 현재 약 {ram:.0f}GB로 "
                     "변환 중 프로그램이 종료될 수 있습니다.",
                 )
             )
@@ -743,14 +853,16 @@ def _download_file(
                         log(f"  {label}: {pct}% ({mb}MB / {total_mb}MB)")
 
 
-def load_model(model_size: str, log: Callable[[str], None]):
-    """WhisperModel을 만든다. CUDA DLL 등록도 여기서 해 준다."""
+def load_model(repo: str, log: Callable[[str], None]):
+    """WhisperModel을 만든다. CUDA DLL 등록도 여기서 해 준다.
+
+    repo 는 resolve_model_repo() 가 고른 HuggingFace 저장소 이름이다."""
     _register_cuda_dlls()
     from faster_whisper import WhisperModel
 
-    log(f"모델 로딩 중... ({model_size}, GPU 있으면 자동 사용, 없으면 CPU)")
+    log(f"모델 로딩 중... ({repo}, GPU 있으면 자동 사용, 없으면 CPU)")
     log("※ 처음 실행하는 모델이면 인터넷에서 다운로드가 필요합니다 (수백MB~수GB).")
-    model = WhisperModel(model_size, device="auto", compute_type="auto")
+    model = WhisperModel(repo, device="auto", compute_type="auto")
     log("모델 로딩 완료.")
     return model
 
@@ -819,7 +931,9 @@ class SttApp:
         self.log_queue: "queue.Queue[str]" = queue.Queue()
         self.worker: threading.Thread | None = None
         self.model = None
-        self.model_size_loaded: str | None = None
+        # 언어에 따라 같은 등급도 다른 저장소를 쓰므로, 캐시 키는 저장소 이름이다.
+        self.model_repo_loaded: str | None = None
+        self.hw_summary = "하드웨어 정보를 읽지 못함"
         self.gpu_checked = False
         self.declined_gpu_download = False
         self.hw: Hardware | None = None
@@ -982,7 +1096,6 @@ class SttApp:
 
     def _on_hw_detected(self, hw: Hardware) -> None:
         self.hw = hw
-        rec, reason = recommend_model(hw)
 
         bits: list[str] = []
         if hw.ram_gb:
@@ -994,11 +1107,19 @@ class SttApp:
             bits.append(f"NVIDIA GPU{f' {hw.vram_gb:.0f}GB' if hw.vram_gb else ''}")
         elif hw.gpu_name:
             bits.append("GPU 가속 미지원(비 NVIDIA)")
-        summary = " · ".join(bits) if bits else "하드웨어 정보를 읽지 못함"
+        self.hw_summary = " · ".join(bits) if bits else "하드웨어 정보를 읽지 못함"
 
+        self._apply_recommendation()
+
+    def _apply_recommendation(self) -> None:
+        """하드웨어와 현재 언어에 맞는 권장 모델을 라벨에 반영한다.
+
+        언어를 바꾸면 권장 모델이 달라질 수 있어 언어 변경 때도 다시 부른다.
+        다만 사용자가 콤보박스를 직접 건드린 뒤에는 그 선택을 덮어쓰지 않는다."""
+        rec, reason = recommend_model(self.hw, language_code(self.language_var.get()))
         if not self.model_user_touched:
             self.model_var.set(rec)
-        self.hw_label.config(text=f"감지: {summary}\n권장 모델: {rec} — {reason}")
+        self.hw_label.config(text=f"감지: {self.hw_summary}\n권장 모델: {rec} — {reason}")
         self._refresh_model_note()
 
     def _on_model_selected(self, _event: object = None) -> None:
@@ -1008,7 +1129,11 @@ class SttApp:
     def _on_language_selected(self, _event: object = None) -> None:
         code = language_code(self.language_var.get())
         self._remember(language=code or "auto")
-        self._refresh_model_note()
+        # 언어가 바뀌면 영어 전용 모델 교체 여부와 권장 모델이 함께 달라진다.
+        if self.hw is None:
+            self._refresh_model_note()
+        else:
+            self._apply_recommendation()
 
     def _refresh_model_note(self) -> None:
         notices = model_notices(
@@ -1285,11 +1410,11 @@ class SttApp:
     def _output_path_for(self, audio_path: str) -> str:
         return output_path_for(audio_path, self.output_dir)
 
-    def _ensure_model(self, model_size: str):
-        if self.model is not None and self.model_size_loaded == model_size:
+    def _ensure_model(self, repo: str):
+        if self.model is not None and self.model_repo_loaded == repo:
             return self.model
-        self.model = load_model(model_size, self._log)
-        self.model_size_loaded = model_size
+        self.model = load_model(repo, self._log)
+        self.model_repo_loaded = repo
         return self.model
 
     def _run_worker(self) -> None:
@@ -1300,7 +1425,7 @@ class SttApp:
 
             model_size = self.model_var.get()
             language = language_code(self.language_var.get())
-            model = self._ensure_model(model_size)
+            model = self._ensure_model(resolve_model_repo(model_size, language))
             self._log(f"인식 언어: {language_label(language or 'auto')}")
 
             total = len(self.selected_files)
@@ -1341,7 +1466,7 @@ AUDIO_EXTS = (".mp3", ".wav", ".m4a", ".mp4", ".aac", ".flac", ".ogg", ".wma")
 CLI_EPILOG = """예시:
   python stt_app.py 0910                    이름에 0910이 든 녹음 전부 변환
   python stt_app.py 컴퓨터구조 정보보호      검색어 여러 개 (각각 찾아서 전부)
-  python stt_app.py 0910 -m large-v3 -l en  모델·언어 지정
+  python stt_app.py 0910 -m turbo -l en     모델·언어 지정
   python stt_app.py --list                  녹음 폴더의 오디오 목록만 보기
   python stt_app.py -i "D:/소리 녹음" --save 녹음 폴더를 바꾸고 기억시키기
 
@@ -1500,7 +1625,7 @@ def run_cli(argv: list[str]) -> int:
     if model_size:
         print(f"모델: {model_size}")
     else:
-        model_size, reason = recommend_model(hw)
+        model_size, reason = recommend_model(hw, language)
         print(f"모델 자동 선택: {model_size} - {reason}")
         print("  (직접 고르려면 -m " + " | ".join(MODEL_SIZES) + ")")
     print(f"인식 언어: {language_label(language or 'auto')}")
@@ -1524,7 +1649,7 @@ def run_cli(argv: list[str]) -> int:
                 print("CPU로 진행합니다.")
         print()
 
-    model = load_model(model_size, print)
+    model = load_model(resolve_model_repo(model_size, language), print)
 
     failed = 0
     total = len(targets)
