@@ -252,6 +252,31 @@ def is_hallucination(text: str) -> bool:
     return any(pattern.search(stripped) for pattern in HALLUCINATION_PATTERNS)
 
 
+# ---- 함께 묶여 나가는 리소스 ---------------------------------------------
+
+
+def resource_path(*parts: str) -> str:
+    """아이콘처럼 exe 에 함께 묶여 나가는 파일의 경로.
+
+    PyInstaller 로 묶이면 실행할 때 임시 폴더에 풀리고 그 위치가 sys._MEIPASS
+    에 들어온다. 소스로 실행할 때는 이 파일 옆을 본다."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, *parts)
+
+
+def set_taskbar_identity() -> None:
+    """작업 표시줄이 이 앱을 python.exe 가 아니라 우리 앱으로 보게 한다.
+
+    이걸 안 해 주면 소스로 실행했을 때 작업 표시줄에 파이썬 아이콘이 뜬다.
+    창을 만들기 전에 불러야 한다. Windows 전용이라 실패는 무시한다."""
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "NombarHwan.TranscribeToLearn"
+        )
+    except Exception:
+        pass
+
+
 # ---- 사용자 설정 저장 (마지막 폴더 기억) ---------------------------------
 
 
@@ -947,6 +972,7 @@ class SttApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(f"Transcribe to Learn v{APP_VERSION}")
+        self._apply_window_icon()
         self.root.geometry("640x600")
         self.root.minsize(520, 480)
 
@@ -973,6 +999,15 @@ class SttApp:
         self.root.after(1200, self._maybe_check_update)
 
     # ---- UI ---------------------------------------------------------
+
+    def _apply_window_icon(self) -> None:
+        """제목 표시줄과 작업 표시줄 아이콘. default=True 라서 대화상자에도 붙는다.
+
+        아이콘이 없어도 앱은 멀쩡히 돌아야 하므로 실패는 조용히 넘긴다."""
+        try:
+            self.root.iconbitmap(default=resource_path("assets", "TTL.ico"))
+        except Exception:
+            pass
 
     def _build_widgets(self) -> None:
         pad = {"padx": 10, "pady": 6}
@@ -1753,6 +1788,7 @@ def main() -> None:
             code = 130
         raise SystemExit(code)
 
+    set_taskbar_identity()
     root = tk.Tk()
     SttApp(root)
     root.mainloop()

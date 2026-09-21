@@ -31,6 +31,7 @@ python -m PyInstaller `
     --noupx `
     --name STT_KOR `
     --icon assets/TTL.ico `
+    --add-data "assets/TTL.ico;assets" `
     --collect-all faster_whisper `
     --collect-all ctranslate2 `
     --collect-all av `
