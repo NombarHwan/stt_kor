@@ -264,6 +264,29 @@ def resource_path(*parts: str) -> str:
     return os.path.join(base, *parts)
 
 
+def running_as_msix() -> bool:
+    """MSIX(마이크로소프트 스토어) 패키지로 실행 중인지.
+
+    스토어로 배포한 판에서는 앱이 스스로 업데이트하면 안 된다.
+    - 설치 위치(WindowsApps)가 읽기 전용이라 덮어쓸 수 없다.
+    - 설치 마법사를 돌려 봐야 업그레이드가 아니라 두 번째 사본이 깔린다.
+    - 업데이트는 스토어가 한다.
+    GitHub 에서 받은 설치본은 패키지가 아니므로 예전처럼 자체 업데이트한다.
+
+    GetCurrentPackageFullName 은 패키지가 아니면 APPMODEL_ERROR_NO_PACKAGE
+    (15700) 를 돌려준다."""
+    if os.name != "nt":
+        return False
+    try:
+        length = ctypes.c_uint32(0)
+        rc = ctypes.windll.kernel32.GetCurrentPackageFullName(
+            ctypes.byref(length), None
+        )
+        return rc != 15700
+    except Exception:
+        return False
+
+
 def set_taskbar_identity() -> None:
     """작업 표시줄이 이 앱을 python.exe 가 아니라 우리 앱으로 보게 한다.
 
@@ -509,6 +532,12 @@ def _register_cuda_dlls() -> None:
     if not bin_dirs:
         # 개발 환경(pip install nvidia-*)에서 소스로 바로 실행하는 경우의
         # 대체 경로.
+        #
+        # 주의: 이 import 는 try 안에 있어도 PyInstaller 의 정적 분석에는 잡힌다.
+        # 개발 PC 처럼 nvidia-*-cu12 가 깔려 있으면 2GB 가 통째로 exe 에 들어간다
+        # (릴리스 러너에는 없어서 CI 빌드만 작았다). 그래서 빌드 스크립트에서
+        # --exclude-module nvidia 로 뺀다. 묶인 앱은 어차피 %LOCALAPPDATA% 에
+        # 내려받은 DLL 을 쓰므로 이 경로가 필요 없다.
         try:
             import nvidia.cublas
             import nvidia.cuda_nvrtc
@@ -990,6 +1019,7 @@ class SttApp:
         self.declined_gpu_download = False
         self.hw: Hardware | None = None
         self.model_user_touched = False
+        self.is_msix = running_as_msix()
 
         self._build_widgets()
         self.root.after(100, self._drain_log_queue)
@@ -1081,7 +1111,13 @@ class SttApp:
         self.update_button = ttk.Button(
             status_row, text="업데이트 확인", command=self._manual_update_check
         )
-        self.update_button.pack(side="right")
+        # 스토어 판에서는 업데이트를 스토어가 맡으므로 이 버튼을 내보내지 않는다.
+        if not self.is_msix:
+            self.update_button.pack(side="right")
+        else:
+            ttk.Label(
+                status_row, text="업데이트는 Microsoft Store에서 받습니다", foreground="#777"
+            ).pack(side="right")
 
         self.root.bind("<Configure>", self._on_resize)
         self._refresh_model_note()
@@ -1267,12 +1303,16 @@ class SttApp:
 
     def _maybe_check_update(self) -> None:
         """자동 확인. 마지막 확인 후 UPDATE_CHECK_INTERVAL 이 지났을 때만 한다."""
+        if self.is_msix:
+            return
         last = self.settings.get("last_update_check")
         if isinstance(last, (int, float)) and 0 <= time.time() - last < UPDATE_CHECK_INTERVAL:
             return
         threading.Thread(target=self._check_update_worker, daemon=True).start()
 
     def _manual_update_check(self) -> None:
+        if self.is_msix:
+            return
         self.update_button.config(state="disabled")
         self._log("업데이트를 확인하는 중...")
         threading.Thread(target=self._check_update_worker, args=(True,), daemon=True).start()

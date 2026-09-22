@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Transcribe to Learn (TTL) - Microsoft Store(MSIX) 패키지 매니페스트
+
+  PyInstaller onedir 산출물을 그대로 감싸는 전체 신뢰(full trust) Win32
+  패키지다. UWP 앱이 아니므로 EntryPoint 는 Windows.FullTrustApplication 이고
+  runFullTrust 기능이 필요하다.
+
+  ★ 스토어에 제출하기 전에 Identity 의 Name / Publisher 를 Partner Center 가
+    발급한 값으로 바꿔야 한다. 파트너 센터 > 제품 > 제품 ID 에 있다.
+    아래 값은 로컬 사이드로드 테스트용 임시값이다(자체 서명 인증서의 주체와
+    반드시 같아야 한다).
+
+  Version 은 네 자리이고 마지막 자리는 스토어가 0 을 요구한다.
+  tools/make_msix.ps1 이 빌드할 때 {VERSION} 을 치환한다.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities">
+
+  <Identity
+    Name="NombarHwan.TranscribeToLearn"
+    Publisher="CN=NombarHwan"
+    Version="{VERSION}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Transcribe to Learn</DisplayName>
+    <PublisherDisplayName>NombarHwan</PublisherDisplayName>
+    <Description>강의 녹음을 컴퓨터 안에서 그대로 받아쓰는 프로그램입니다. 파일을 외부로 보내지 않습니다.</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- 17763 = Windows 10 1809. 전체 신뢰 패키징이 안정적으로 되는 하한선. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="ko-KR" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Capabilities>
+    <!-- Win32 실행 파일을 그대로 돌리기 위해 필요. 비게임 데스크톱 앱의 표준 구성이다. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="TTL" Executable="STT_KOR.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Transcribe to Learn"
+        Description="강의 녹음을 컴퓨터 안에서 그대로 받아쓰는 프로그램입니다."
+        BackgroundColor="#F3F3F3"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile
+          Square71x71Logo="Assets\Square71x71Logo.png"
+          Square310x310Logo="Assets\Square310x310Logo.png"
+          Wide310x150Logo="Assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+</Package>

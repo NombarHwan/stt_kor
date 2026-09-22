@@ -32,6 +32,7 @@ python -m PyInstaller `
     --name STT_KOR `
     --icon assets/TTL.ico `
     --add-data "assets/TTL.ico;assets" `
+    --exclude-module nvidia `
     --collect-all faster_whisper `
     --collect-all ctranslate2 `
     --collect-all av `
