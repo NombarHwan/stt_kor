@@ -6,10 +6,15 @@
   패키지다. UWP 앱이 아니므로 EntryPoint 는 Windows.FullTrustApplication 이고
   runFullTrust 기능이 필요하다.
 
-  ★ 스토어에 제출하기 전에 Identity 의 Name / Publisher 를 Partner Center 가
-    발급한 값으로 바꿔야 한다. 파트너 센터 > 제품 > 제품 ID 에 있다.
-    아래 값은 로컬 사이드로드 테스트용 임시값이다(자체 서명 인증서의 주체와
-    반드시 같아야 한다).
+  Identity 의 Name / Publisher / PublisherDisplayName 은 tools/make_msix.ps1 이
+  빌드할 때 치환한다. 스토어 제출본은 Partner Center 발급값을, 로컬 사이드로드
+  테스트본은 자체 서명 인증서 주체(CN=NombarHwan)를 쓴다 - 서명 인증서의 주체와
+  매니페스트 Publisher 가 다르면 설치가 거부되기 때문이다.
+
+  Partner Center > 제품 > 제품 ID (Store ID 9NBSRBP82NT8):
+    Name      NombarHwan.TranscribetoLearn   <- 가운데 to 는 소문자다. 예약한
+                                                이름에서 공백만 뺀 형태.
+    Publisher CN=4A62FD04-10BA-49EF-89B6-10CAED11DC9E
 
   Version 은 네 자리이고 마지막 자리는 스토어가 0 을 요구한다.
   tools/make_msix.ps1 이 빌드할 때 {VERSION} 을 치환한다.
@@ -20,14 +25,14 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities">
 
   <Identity
-    Name="NombarHwan.TranscribeToLearn"
-    Publisher="CN=NombarHwan"
+    Name="{IDENTITY_NAME}"
+    Publisher="{PUBLISHER}"
     Version="{VERSION}"
     ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>Transcribe to Learn</DisplayName>
-    <PublisherDisplayName>NombarHwan</PublisherDisplayName>
+    <PublisherDisplayName>{PUBLISHER_DISPLAY}</PublisherDisplayName>
     <Description>강의 녹음을 컴퓨터 안에서 그대로 받아쓰는 프로그램입니다. 파일을 외부로 보내지 않습니다.</Description>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>

@@ -1,0 +1,95 @@
+Submission options > 인증 담당자용 메모 (Notes for certification)
+
+아래 영문 블록을 그대로 붙여넣는다. 심사자는 영어로 읽는다.
+
+본문에 걸린 샘플 오디오는 packaging/sample-ko-10s.mp3 이다. 그 링크는 이
+파일의 직접 다운로드 주소이므로, 리포에 푸시되어 있어야 심사자가 받을 수
+있다. 링크가 죽으면 심사자가 변환을 성공시키지 못하고 "앱이 동작하지 않음"
+으로 반려된다.
+
+
+========================================================================
+붙여넣을 내용 (영문)
+========================================================================
+
+This app transcribes audio files to text. All speech recognition runs locally
+on the machine. No account or sign-in is required. The user interface is in
+Korean.
+
+HOW TO TEST
+
+1. Launch the app.
+2. In the "모델" (model) dropdown at the top, select "tiny". This is the
+   smallest model (about 75 MB) and gives the fastest test. The default
+   selection may be a larger model chosen automatically for the test machine.
+3. Click "오디오 파일 선택" (Select audio file) and choose an audio file.
+   A short Korean sample is available here: https://github.com/NombarHwan/stt_kor/raw/main/packaging/sample-ko-10s.mp3
+4. Click "변환 시작" (Start). On first run the selected model is downloaded;
+   progress is shown in the log area. Transcribed sentences then appear in the
+   log, and a .txt file is saved next to the audio file.
+
+INTERNET CONNECTION IS REQUIRED ON FIRST RUN
+
+The selected speech recognition model is downloaded once from Hugging Face
+(huggingface.co) and reused afterwards. Model size ranges from about 75 MB
+(tiny) to 3.1 GB (large-v3). Please select "tiny" for testing. Without a
+network connection and with no model downloaded yet, transcription cannot
+start.
+
+NO GPU IS REQUIRED
+
+If no NVIDIA GPU is present, the app detects this and runs on the CPU
+automatically. No action is needed.
+
+If an NVIDIA GPU is present, the app asks in a dialog whether to download CUDA
+runtime libraries from PyPI (pypi.org) for GPU acceleration. This is optional
+and consent-based. Answering "아니오" (No) runs on the CPU.
+
+WHY runFullTrust IS DECLARED
+
+This is a Win32 desktop application built with PyInstaller and packaged as an
+MSIX. Full trust is required to run the bundled executable.
+
+PRIVACY
+
+The app does not use the microphone and has no recording feature. It only
+reads audio files the user selects. Audio and transcripts never leave the
+machine and are not sent to any server. No telemetry or analytics.
+Privacy policy: https://github.com/NombarHwan/stt_kor/blob/main/PRIVACY.txt
+
+UPDATES
+
+This Store build detects that it is running as an MSIX package and disables
+its own updater, leaving updates to the Store. The separately distributed
+GitHub build is the only one that self-updates.
+
+
+========================================================================
+같은 내용 (한국어, 참고용)
+========================================================================
+
+이 앱은 오디오 파일을 텍스트로 변환합니다. 음성 인식은 전부 이 PC 안에서
+실행됩니다. 계정과 로그인이 없습니다. 화면은 한국어입니다.
+
+테스트 방법
+  1. 앱을 실행합니다.
+  2. 상단 "모델" 목록에서 tiny 를 고릅니다. 가장 작은 모델(약 75MB)이라
+     테스트가 가장 빠릅니다.
+  3. "오디오 파일 선택"으로 오디오를 고릅니다. 짧은 한국어 샘플: https://github.com/NombarHwan/stt_kor/raw/main/packaging/sample-ko-10s.mp3
+  4. "변환 시작"을 누릅니다. 처음에는 모델을 내려받고, 이후 인식된 문장이
+     로그에 나오며 오디오 파일 옆에 .txt 로 저장됩니다.
+
+첫 실행에는 인터넷이 필요합니다. 선택한 모델을 Hugging Face 에서 한 번
+내려받고 이후에는 재사용합니다. 모델은 약 75MB(tiny)에서 3.1GB(large-v3)이며,
+테스트에는 tiny 를 권합니다.
+
+GPU 는 필요 없습니다. NVIDIA GPU 가 없으면 자동으로 CPU 로 동작합니다.
+GPU 가 있으면 CUDA 라이브러리 다운로드 여부를 대화상자로 묻고, 동의한
+경우에만 PyPI 에서 내려받습니다.
+
+runFullTrust 는 PyInstaller 로 빌드한 Win32 데스크톱 앱이라 필요합니다.
+
+마이크를 사용하지 않고 녹음 기능이 없습니다. 오디오와 변환 결과는 PC 를
+벗어나지 않습니다.
+
+스토어 판은 MSIX 로 실행 중임을 감지해 자체 업데이트를 끕니다.

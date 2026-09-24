@@ -1,23 +1,49 @@
-# Transcribe to Learn (TTL) - MSIX 패키지 빌드
+﻿# Transcribe to Learn (TTL) - MSIX 패키지 빌드
 #
 # 사용법:
 #   powershell -ExecutionPolicy Bypass -File tools/make_msix.ps1 -Version 1.1.1.0
+#       -> 스토어 제출본. Partner Center Identity, 서명 없음.
+#          (Microsoft 가 자기 인증서로 다시 서명하므로 우리 서명은 필요 없다)
 #   powershell -ExecutionPolicy Bypass -File tools/make_msix.ps1 -Version 1.1.1.0 -Install
+#       -> 로컬 확인본. 자체 서명 인증서로 서명하고 이 PC에 사이드로드한다.
 #
-#   -Install 은 자체 서명 인증서로 서명하고 이 PC에 사이드로드까지 한다.
-#   로컬 확인용이다. 스토어 제출본은 서명하지 않고 낸다 - Microsoft 가
-#   자기 인증서로 다시 서명하므로 우리 인증서는 필요 없다.
+# 두 판은 매니페스트의 Publisher 가 다르다. 스토어 Publisher 는
+# CN=<GUID> 라 자체 서명 인증서를 만들 수 없고, 서명 주체와 매니페스트
+# Publisher 가 다르면 Windows 가 설치를 거부한다. 그래서 -Install 일 때만
+# 자체 서명용 Identity 로 바꿔 넣는다. 나머지(코드/자산/버전)는 완전히 같다.
 #
 # 먼저 dist\STT_KOR\ 가 있어야 한다 (build_exe.ps1 또는 PyInstaller).
 
 param(
     [string]$Version = "1.1.1.0",
     [switch]$Install,
-    [string]$Publisher = "CN=NombarHwan"   # 자체 서명 테스트용. 매니페스트 Publisher 와 같아야 한다.
+    [string]$Publisher   # 자체 서명 테스트용 주체를 직접 지정할 때만. 기본값 아래.
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
+
+# ---- 0) Identity 결정 -----------------------------------------------------
+# Partner Center > 제품 > 제품 ID (Store ID 9NBSRBP82NT8) 에서 발급된 값.
+# Name 의 가운데 "to" 는 소문자다. 한 글자라도 다르면 업로드가 거부된다.
+$StoreIdentityName = "NombarHwan.TranscribetoLearn"
+$StorePublisher    = "CN=4A62FD04-10BA-49EF-89B6-10CAED11DC9E"
+$PublisherDisplay  = "NombarHwan"
+
+if ($Install) {
+    # 사이드로드용. Identity Name 은 그대로 두고 Publisher 만 자체 서명 주체로.
+    if (-not $Publisher) { $Publisher = "CN=NombarHwan" }
+    $identityName = $StoreIdentityName
+    $mode = "로컬 사이드로드용"
+} else {
+    if ($Publisher -and $Publisher -ne $StorePublisher) {
+        throw "-Publisher 는 -Install 과 함께 쓸 때만 의미가 있습니다. 스토어 제출본의 Publisher 는 $StorePublisher 로 고정입니다."
+    }
+    $Publisher = $StorePublisher
+    $identityName = $StoreIdentityName
+    $mode = "스토어 제출용"
+}
+Write-Host "빌드 종류: $mode  (Publisher $Publisher)"
 
 if ($Version -notmatch '^\d+\.\d+\.\d+\.0$') {
     throw "Version 은 네 자리여야 하고 마지막 자리는 0 이어야 합니다 (스토어 요구사항): $Version"
@@ -63,7 +89,11 @@ Copy-Item "dist\STT_KOR\*" $stage -Recurse
 # 매니페스트가 참조하는 시각 자산. 배율/targetsize 변형은 makepri 가 색인한다.
 Copy-Item "assets\*.png" "$stage\Assets"
 
-(Get-Content "packaging\AppxManifest.xml" -Raw -Encoding UTF8).Replace("{VERSION}", $Version) |
+(Get-Content "packaging\AppxManifest.xml" -Raw -Encoding UTF8).
+    Replace("{VERSION}", $Version).
+    Replace("{IDENTITY_NAME}", $identityName).
+    Replace("{PUBLISHER}", $Publisher).
+    Replace("{PUBLISHER_DISPLAY}", $PublisherDisplay) |
     Set-Content "$stage\AppxManifest.xml" -Encoding UTF8
 Write-Host "구성 완료: $stage (버전 $Version)"
 
@@ -76,7 +106,8 @@ Pop-Location
 if (-not (Test-Path "$stage\resources.pri")) { throw "resources.pri 생성 실패" }
 
 # ---- 4) 패키징 ------------------------------------------------------------
-$msix = "msix_out\TranscribeToLearn-$Version.msix"
+$suffix = if ($Install) { "-sideload" } else { "-store" }
+$msix = "msix_out\TranscribeToLearn-$Version$suffix.msix"
 & $makeappx pack /d $stage /p $msix /o
 if ($LASTEXITCODE -ne 0) { throw "makeappx 실패 (exit $LASTEXITCODE)" }
 Write-Host ""
@@ -85,7 +116,9 @@ Write-Host "패키지 생성: $msix"
 if (-not $Install) {
     Write-Host ""
     Write-Host "스토어 제출은 이 .msix 를 서명 없이 그대로 올리면 됩니다."
+    Write-Host "  Partner Center > 제품 > 제출 > 패키지 에 업로드"
     Write-Host "이 PC 에서 먼저 확인하려면 -Install 을 붙여 다시 실행하세요."
+    Write-Host "(-Install 은 Publisher 가 다른 별도 패키지를 만든다. 제출본이 아니다.)"
     return
 }
 

@@ -1,0 +1,52 @@
+Transcribe to Learn
+Privacy Policy
+
+Last updated: 2026-09-24
+
+
+Transcribe to Learn is an application that does not store or share personal
+information of any kind.
+
+Transcribe to Learn recognizes speech using OpenAI's Whisper model together
+with code that suppresses hallucinated output. Recognition runs entirely on
+the user's PC. The audio files being transcribed and the resulting text never
+leave the user's PC, and are not transmitted to any server, including the
+developer's.
+
+Transcribe to Learn has no accounts, no logins, no usage tracking, no
+advertising, and no analytics.
+
+Transcribe to Learn does not use the microphone. It has no recording feature;
+it reads audio files the user already has.
+
+
+What is stored on the PC
+
+Transcribe to Learn remembers the last used audio folder, output folder, and
+recognition language. It also keeps the downloaded speech recognition model
+and the CUDA libraries used for GPU acceleration so they need not be
+downloaded again. All of these are stored only on the user's PC, are not
+transmitted anywhere, and are removed when the app is uninstalled.
+
+
+When the internet is used
+
+Transcribe to Learn connects to the internet in the following three cases. In
+none of them is the user's audio or text sent.
+
+  1. The first time a selected speech recognition model is used, it is
+     downloaded from Hugging Face (huggingface.co).
+  2. Only when an NVIDIA graphics card is present and the user consents in a
+     dialog, the CUDA libraries for GPU acceleration are downloaded from PyPI
+     (pypi.org). Without consent, the app runs on the CPU.
+  3. The GitHub distribution checks whether a new version is available. The
+     Microsoft Store distribution has this disabled, since the Store handles
+     updates.
+
+Once a model has been downloaded, transcription works without an internet
+connection.
+
+
+Contact
+
+https://github.com/NombarHwan/stt_kor/issues
