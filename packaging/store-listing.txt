@@ -100,14 +100,38 @@ assets/StoreListing-logo-300.png  (300x300)
 Properties (제품 속성)
 ========================================================================
 
-카테고리              생산성
-개인정보처리방침 URL  https://github.com/NombarHwan/stt_kor/blob/main/PRIVACY.txt
-지원 연락처 정보      https://github.com/NombarHwan/stt_kor/issues
+범주 / 하위 범주      교육 > 교육용 도구
 웹 사이트             https://github.com/NombarHwan/stt_kor
+지원 연락처 정보      https://github.com/NombarHwan/stt_kor/issues
+전화번호 / 주소       비워 둔다 (선택 사항이고 개인 정보다)
+
+개인 정보 취급 방침
+  "이 제품은 개인 정보에 액세스, 수집 또는 전송하나요?"  ->  예
+  URL  https://github.com/NombarHwan/stt_kor/blob/main/PRIVACY.txt
+
+  개발자는 아무것도 수집하지 않지만, 앱이 사용자의 오디오 파일을 읽는다.
+  '아니오' 로 선언했다가 심사자가 달리 판단하면 반려된다. '예' + 수집하지
+  않는다고 적힌 방침을 제출하는 쪽이 안전하고 불이익이 없다.
+
+디스플레이 모드       해당 없음. 아무것도 체크하지 않는다 (Mixed Reality 용)
+
+제품 선언             기본적으로 아무것도 체크하지 않는다
 
 시스템 요구 사항
-  최소   Windows 10 1809(빌드 17763) 이상 64비트, RAM 8GB, 저장공간 2GB
-  권장   NVIDIA 그래픽카드, RAM 16GB, 저장공간 5GB
+  체크박스는 전부 비워 둔다. 특히 '마이크' 를 체크하면 안 된다 - 이 앱은
+  마이크를 쓰지 않는다. 최소에 체크하면 해당 장치가 없는 사용자에게 경고가
+  뜨고 리뷰도 막힌다.
+
+                     최소                  권장
+  메모리             4 GB                  16 GB
+  DirectX            지정되지 않음          지정되지 않음
+  비디오 메모리       지정되지 않음          4 GB
+  프로세서           x64 프로세서           4코어 이상
+  그래픽             (비움)                NVIDIA GPU (CUDA 지원)
+
+  RAM 4GB 근거: GPU 가 없고 저사양이면 base 모델로 내려가 동작한다
+  (recommend_model). 8GB 로 잡으면 실제로 쓸 수 있는 사용자에게 경고가 뜬다.
+  VRAM 4GB 근거: 3.5GB 이상이면 turbo 를 권장한다.
 
 
 ========================================================================

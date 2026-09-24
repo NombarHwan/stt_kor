@@ -1,4 +1,7 @@
-Submission options > 인증 담당자용 메모 (Notes for certification)
+인증 담당자용 메모 (Notes for certification)
+
+  * 아래 '테스트 방법' 블록  -> 왼쪽 메뉴 '추가적인 테스트 정보' 페이지
+  * 맨 아래 runFullTrust 블록 -> '제출 옵션' 페이지의 제한된 기능 칸 (필수)
 
 아래 영문 블록을 그대로 붙여넣는다. 심사자는 영어로 읽는다.
 
@@ -93,3 +96,74 @@ runFullTrust 는 PyInstaller 로 빌드한 Win32 데스크톱 앱이라 필요�
 벗어나지 않습니다.
 
 스토어 판은 MSIX 로 실행 중임을 감지해 자체 업데이트를 끕니다.
+
+
+========================================================================
+제출 옵션 > 제한된 기능: runFullTrust 사유  (필수 입력)
+========================================================================
+
+"다음이 필요한 이유는 무엇인가요? runFullTrust 기능 및 제품에서 어떻게
+사용되나요?" 칸에 붙여넣는다.
+
+★ 이 칸은 글자 수 제한이 있어서 아래 긴 본문이 들어가지 않는다. 길이별로
+  세 가지를 준비해 뒀다. 들어가는 가장 긴 것을 쓰면 된다.
+  긴 본문에만 있던 CUDA 설명은 '추가적인 테스트 정보' 페이지에 들어 있으므로
+  잘라내도 심사자가 볼 수 있다.
+
+--- 짧은 판 A (492자) ---
+
+Transcribe to Learn is a Win32 desktop app built with PyInstaller and packaged
+as MSIX. It is not a UWP app; its entry point is Windows.FullTrustApplication,
+so runFullTrust is required for it to launch. Full trust runs the bundled
+executable and its native dependencies (CTranslate2, ONNX Runtime, PyAV) for
+local speech recognition, and reads and writes the audio and transcript files
+the user selects. The app does not use the microphone, run in the background,
+or send user data anywhere.
+
+--- 짧은 판 B (329자) ---
+
+Transcribe to Learn is a Win32 desktop app built with PyInstaller and packaged
+as MSIX, not a UWP app. Its entry point is Windows.FullTrustApplication, so
+runFullTrust is required to launch the bundled executable and read and write
+the files the user selects. No microphone, no background execution, no data
+sent off the machine.
+
+--- 짧은 판 C (249자) ---
+
+A Win32 desktop app packaged as MSIX with PyInstaller, not a UWP app. Its entry
+point is Windows.FullTrustApplication, so runFullTrust is required to launch it
+and to read and write the files the user selects. No microphone, no background
+execution.
+
+--- 원본 (길어서 안 들어갔음. 참고용) ---
+
+------------------------------------------------------------------------
+
+Transcribe to Learn is a conventional Win32 desktop application written in
+Python and packaged as an MSIX with PyInstaller. It is not a UWP app: the
+manifest entry point is Windows.FullTrustApplication, so runFullTrust is
+required for the packaged executable to launch at all.
+
+Full trust is needed for the following:
+
+1. Running the bundled desktop executable and its native dependencies
+   (CTranslate2, ONNX Runtime, PyAV) that perform speech recognition locally
+   on the user's machine.
+2. Reading the audio files the user explicitly selects through a standard
+   file picker, and writing the resulting transcript as a text file to the
+   folder the user chooses.
+3. Loading CUDA runtime libraries for optional GPU acceleration, which the
+   user consents to in a dialog before they are downloaded.
+
+The app does not use the microphone, does not run in the background, does not
+start automatically, and does not transmit user audio or transcripts to any
+server. runFullTrust is the only restricted capability declared.
+
+------------------------------------------------------------------------
+
+(한국어 참고)
+PyInstaller 로 만든 일반 Win32 데스크톱 앱을 MSIX 로 감싼 것이라, UWP 가
+아니어서 실행 자체에 runFullTrust 가 필요하다. 번들된 실행 파일과 네이티브
+의존성 구동, 사용자가 고른 오디오 파일 읽기와 결과 txt 쓰기, 동의 기반
+CUDA 라이브러리 로드에 쓰인다. 마이크 미사용, 백그라운드 실행 없음,
+자동 시작 없음, 외부 전송 없음. 선언한 제한된 기능은 이것 하나뿐이다.

@@ -1,0 +1,91 @@
+Microsoft Store listing - English (en-US)
+
+한국어판은 store-listing.txt. 이쪽은 영어(미국) 등록 정보 칸에 넣는다.
+화면이 한국어뿐이라는 점을 설명에 명시했다. 적어두지 않으면 설치한 뒤
+"화면이 한국어다" 라는 리뷰가 달린다.
+
+
+--- Product name ---
+
+Transcribe to Learn
+
+
+--- Short description ---
+
+Turns lecture recordings into text on your own PC. Pick an audio file and it
+transcribes and saves it. Everything runs on this machine; recordings are
+never uploaded. No account, no sign-in. The app interface is in Korean.
+
+
+--- Description ---
+
+Transcribe to Learn turns lecture and meeting recordings into text, so you can
+read and search them instead of listening again.
+
+Speech recognition runs entirely on your own PC. Recordings and transcripts
+are never sent to any server. There is no account and no sign-in.
+
+Note: the application interface is in Korean. Recognition supports Korean,
+English, and automatic language detection.
+
+Three steps:
+
+  1. Pick an audio file (mp3, wav, m4a, mp4, aac, flac, ogg, wma)
+  2. Pick the recognition language (Korean / English / auto-detect)
+  3. Press start, and the transcript is saved as a text file
+
+The app checks your graphics card and memory and suggests a suitable
+recognition model. With an NVIDIA graphics card it uses GPU acceleration;
+without one it runs on the CPU.
+
+Choosing English switches to an English-only model for better accuracy. For
+lectures that mix English and Korean, use the turbo or large-v3 model.
+
+The app remembers the audio folder, output folder, and recognition language
+you used last.
+
+The first time a model is used it is downloaded, from about 75 MB to 3.1 GB
+depending on the model. An internet connection is needed for that download;
+afterwards the downloaded file is reused.
+
+AI speech recognition is not perfect. Technical terms and proper nouns may
+come out wrong, so check the transcript against your course material.
+
+The app does not use the microphone. It has no recording feature; it
+transcribes audio files you already have.
+
+
+--- Product features ---
+
+Speech recognition runs on your PC. Recordings are never uploaded
+No account, no sign-in, no usage tracking
+Korean, English, or automatic language detection
+Supports mp3, wav, m4a, mp4, aac, flac, ogg, wma
+Suggests a recognition model that fits your graphics card
+NVIDIA GPU acceleration, with CPU fallback when no GPU is present
+Remembers the folders and language you used last
+Works without an internet connection once a model is downloaded
+Application interface is in Korean
+
+
+--- Search terms ---
+
+transcribe
+speech to text
+lecture notes
+whisper
+subtitle
+korean stt
+offline transcription
+
+
+--- Screenshots / Store logo ---
+
+한국어판과 같은 파일을 쓴다.
+  assets/StoreListing-screenshot-run.png
+  assets/StoreListing-logo-300.png
+
+
+--- Privacy policy URL (Properties 페이지, 영어 등록 정보용) ---
+
+https://github.com/NombarHwan/stt_kor/blob/main/PRIVACY.en.txt
